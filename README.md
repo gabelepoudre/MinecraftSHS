@@ -1,0 +1,1 @@
+# self host windows minecraft bedrock server

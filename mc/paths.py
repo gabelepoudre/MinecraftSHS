@@ -109,3 +109,9 @@ def get_path_to_versions_dir() -> str:
     return _path_to_versions_dir
 
 
+def get_most_recent_version_dir_in_dir(directory: str) -> str | None:
+    """
+    """
+
+def get_path_to_minecraft_server_exe() -> str:
+    return os.path.join(get_path_to_active_dir(), "bedrock_server.exe")
