@@ -161,7 +161,8 @@ cython_debug/
 
 
 # ignore everything in the /data dir that isn't a README.md file
+/data/*
 !data/README.md
 !data/backup/README.md
-!data/main/README.md
+!data/active/README.md
 !data/versions/README.md
