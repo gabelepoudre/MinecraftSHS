@@ -34,7 +34,7 @@ def get_path_to_data_dir() -> str:
 
 
 def get_path_to_backup_dir() -> str:
-    # either the environement variable, or root/data/backup
+    # either the environment variable, or root/data/backup
     global _path_to_backup_dir
     if _path_to_backup_dir is not None:
         return _path_to_backup_dir
@@ -59,7 +59,7 @@ def get_path_to_backup_dir() -> str:
 
 
 def get_path_to_active_dir() -> str:
-    # either the environement variable, or root/data/active
+    # either the environment variable, or root/data/active
     global _path_to_active_dir
     if _path_to_active_dir is not None:
         return _path_to_active_dir
@@ -85,7 +85,7 @@ def get_path_to_active_dir() -> str:
 
 
 def get_path_to_versions_dir() -> str:
-    # either the environement variable, or root/data/versions
+    # either the environment variable, or root/data/versions
     global _path_to_versions_dir
     if _path_to_versions_dir is not None:
         return _path_to_versions_dir
@@ -107,3 +107,5 @@ def get_path_to_versions_dir() -> str:
     _path_to_versions_dir = os.path.join(get_path_to_data_dir(), "versions")
     _log.info(f"Using default versions directory: {_path_to_versions_dir}")
     return _path_to_versions_dir
+
+
