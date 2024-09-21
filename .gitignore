@@ -140,7 +140,7 @@ venv.bak/
 
 # mypy
 .mypy_cache/
-.dmypy.json
+.dmypy.jsons
 dmypy.json
 
 # Pyre type checker
@@ -158,3 +158,10 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
+
+
+# ignore everything in the /data dir that isn't a README.md file
+!data/README.md
+!data/backup/README.md
+!data/main/README.md
+!data/versions/README.md
