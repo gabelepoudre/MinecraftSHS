@@ -85,8 +85,8 @@ def get_most_recent_update_thread():
         download_version_if_required()
 
         # check again in 5-20 minutes (to avoid spamming the server, and maybe make it look more human)
-        minutes_to_sleep = 60 * int(5 * ((random.random() * 2) + 1))
-        _log.debug(f"Sleeping for {minutes_to_sleep} seconds...")
+        minutes_to_sleep = 60 * 5 * ((random.random() * 2) + 1)
+        _log.debug(f"Sleeping for {minutes_to_sleep:.2f} seconds...")
         time.sleep(minutes_to_sleep)
 
 

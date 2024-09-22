@@ -2,12 +2,31 @@ import time
 
 import mc
 import os
-from threading import Thread
+from threading import Thread, RLock
 import logging
+import datetime
 
 _log = logging.getLogger(__name__)
 
 _current_runtime: mc.ServerRuntime | None = None
+
+
+class ThreadSafeFileLogger(logging.Handler):
+    def __init__(self, level=logging.NOTSET):
+        super().__init__(level)
+        self.lock = RLock()  # noqa
+
+    def emit(self, record):
+        """
+        Emit a record to the file, which will be in the log dir, and will be to the current hour
+        """
+        current_time = datetime.datetime.now()
+        log_dir = mc.paths.get_path_to_logs_dir()
+        log_file = os.path.join(log_dir, f"{current_time.strftime('%Y-%m-%d_%H')}.log")
+
+        with self.lock:
+            with open(log_file, "a") as f:
+                f.write(f"{record.asctime} - {record.name} - {record.levelname} - {record.message}\n")
 
 
 def slow_update():
@@ -109,6 +128,13 @@ def main():
     lib_log.addHandler(ch)
     out_log.addHandler(ch)
     _log.addHandler(ch)
+    # add a file handler to the logs directory
+    fh = ThreadSafeFileLogger()
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(formatter)
+    lib_log.addHandler(fh)
+    out_log.addHandler(fh)
+    _log.addHandler(fh)
 
     # check if we need to update
     if mc.update.need_update():

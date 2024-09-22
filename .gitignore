@@ -166,3 +166,7 @@ cython_debug/
 !data/backup/README.md
 !data/active/README.md
 !data/versions/README.md
+
+# ignore eveything in the /logs dir that isn't a README.md file
+/logs/*
+!logs/README.md
