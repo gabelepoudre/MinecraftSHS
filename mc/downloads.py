@@ -122,3 +122,7 @@ def download_and_extract(download_link: str) -> bool:
             pass
 
         return False
+
+
+if __name__ == '__main__':
+    download_and_extract(get_latest_download_link())

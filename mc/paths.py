@@ -109,9 +109,59 @@ def get_path_to_versions_dir() -> str:
     return _path_to_versions_dir
 
 
-def get_most_recent_version_dir_in_dir(directory: str) -> str | None:
+def get_current_version(fail_on_updating: bool = False) -> str | None:
     """
+    Get the current version of the server, or None if it is not found.
+
+    We do this by first looking for the .updating_to file it the active directory. If it exists, we log a warning and
+    return the contents of the file, which should be the version we are updating to.
+
+    If the .updating_to file does not exist, we look for the .version file in the active directory. If it exists, we
+    return the contents of the file, which should be the current version.
+
+    If neither file exists, we return None.
+
     """
 
-def get_path_to_minecraft_server_exe() -> str:
-    return os.path.join(get_path_to_active_dir(), "bedrock_server.exe")
+    active_dir = get_path_to_active_dir()
+
+    updating_to_file = os.path.join(active_dir, ".updating_to")
+    if os.path.exists(updating_to_file):
+        if fail_on_updating:
+            raise RuntimeError("Server is updating, cannot get current version")
+        with open(updating_to_file, "r") as f:
+            version = f.read().strip()
+        _log.warning(f"Found .updating_to file, returning version: {version}")
+        return version
+
+    version_file = os.path.join(active_dir, ".version")
+    if os.path.exists(version_file):
+        with open(version_file, "r") as f:
+            version = f.read().strip()
+        return version
+
+    return None
+
+
+def get_path_to_minecraft_server_exe(fail_on_updating: bool = True) -> str:
+    """
+    Get the path to the minecraft server exe in the active directory. This is most commonly run when we want to start
+     the server, and so we normally want to fail if the server crashed while updating.
+
+    :param fail_on_updating: If True, we will raise an error if the server is updating. If False, we will return the
+    path to the exe even if the server is updating.
+    :type fail_on_updating: bool
+
+    :return: The path to the minecraft server exe
+    :rtype: str
+
+    """
+    try:
+        version = get_current_version(
+            fail_on_updating=fail_on_updating
+        )
+    except RuntimeError as e:
+        raise RuntimeError("Server is updating, cannot get path to minecraft server exe") from e
+
+    # try to find folder the same as the version
+    return os.path.join(get_path_to_active_dir(), version, "bedrock_server.exe")
