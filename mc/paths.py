@@ -49,6 +49,7 @@ def get_path_to_backup_dir() -> str:
         if os.path.isdir(env_var):
             _path_to_backup_dir = env_var
             _log.info(f"Using MC_BACKUP_DIR: {_path_to_backup_dir}")
+            os.makedirs(_path_to_backup_dir, exist_ok=True)
             return _path_to_backup_dir
         else:
             _log.warning(f"MC_BACKUP_DIR is set to '{env_var}', but it is not a directory")
@@ -75,6 +76,7 @@ def get_path_to_active_dir() -> str:
         if os.path.isdir(env_var):
             _path_to_active_dir = env_var
             _log.info(f"Using MC_ACTIVE_DIR: {_path_to_active_dir}")
+            os.makedirs(_path_to_active_dir, exist_ok=True)
             return _path_to_active_dir
         else:
             _log.warning(f"MC_ACTIVE_DIR is set to '{env_var}', but it is not a directory")
@@ -100,6 +102,7 @@ def get_path_to_versions_dir() -> str:
         if os.path.isdir(env_var):
             _path_to_versions_dir = env_var
             _log.info(f"Using MC_VERSIONS_DIR: {_path_to_versions_dir}")
+            os.makedirs(_path_to_versions_dir, exist_ok=True)
             return _path_to_versions_dir
         else:
             _log.warning(f"MC_VERSIONS_DIR is set to '{env_var}', but it is not a directory")

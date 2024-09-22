@@ -172,27 +172,13 @@ class ServerRuntime:
             pro.terminate()
         try:
             self._stdout_thread.join()
+        except Exception as e:
+            _log.error(f"Error joining print thread: {e}")
+
+        try:
             self._stderr_thread.join()
         except Exception as e:
             _log.error(f"Error joining print thread: {e}")
 
-        self.print_thread = None
-
-
-if __name__ == '__main__':
-    _log.setLevel(logging.DEBUG)
-    _print_log.setLevel(logging.DEBUG)
-
-    # attach console handler
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
-    _log.addHandler(ch)
-    _print_log.addHandler(ch)
-
-    s = ServerRuntime(r"E:\test_mc\bedrock_server.exe")
-    print("starting server...")
-    s.start()
-    print("server started")
-    time.sleep(40)
-    print("stopping server...")
-    s.stop()
+        self._stdout_thread = None
+        self._stderr_thread = None

@@ -1,3 +1,0 @@
-"""
-The big kahuna
-"""
