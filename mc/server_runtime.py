@@ -23,7 +23,7 @@ class ServerRuntime:
 
         self.path_to_exe = path_to_exe
         self._current_level_name = None
-        self._process = None
+        self.process = None
         self._stdout_thread = None
         self._stderr_thread = None
 
@@ -38,7 +38,7 @@ class ServerRuntime:
     def __stdout_packer(self):
         _print_log.info("Starting stdout packer")
         try:
-            for line in self._process.stdout:
+            for line in self.process.stdout:
                 _print_log.info(f"{line}")
         except Exception as e:
             _log.error(f"Error reading stdout: {e}, dying...")
@@ -46,7 +46,7 @@ class ServerRuntime:
     def __stderr_packer(self):
         _print_log.info("Starting stderr packer")
         try:
-            for line in self._process.stderr:
+            for line in self.process.stderr:
                 _print_log.error(f"{line}")
         except Exception as e:
             _log.error(f"Error reading stderr: {e}, dying...")
@@ -59,10 +59,10 @@ class ServerRuntime:
         self.get_current_level_name()  # initialize level name before starting
 
         with self.__lock:
-            if self._process is not None:
+            if self.process is not None:
                 raise RuntimeError("Process already running")
 
-            self._process = subprocess.Popen(
+            self.process = subprocess.Popen(
                 self.path_to_exe,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -97,18 +97,18 @@ class ServerRuntime:
 
         if blocking:
             with self.__lock:
-                return self._process is not None
+                return self.process is not None
         else:
-            return self._process is not None
+            return self.process is not None
 
     def send_command(self, message: str):
         if not self.started():
             raise RuntimeError("Server not started")
 
         with self.__lock:
-            self._process.stdin.write((message + "\n"))
+            self.process.stdin.write((message + "\n"))
             _print_log.info(f">>> {message}")
-            self._process.stdin.flush()
+            self.process.stdin.flush()
 
     def backup(self):
         # we aren't going to bother trying to read the output, so we will just do it in a dirtier way
@@ -164,8 +164,8 @@ class ServerRuntime:
 
         with self.__lock:
             self.send_command("stop")
-            pro: subprocess.Popen = self._process
-            self._process = None
+            pro: subprocess.Popen = self.process
+            self.process = None
             time.sleep(5)  # give it a chance to stop gracefully
             pro.kill()
             pro.wait()

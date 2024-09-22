@@ -24,6 +24,20 @@ def _get_most_recent_downloaded_version():
     return versions[0]
 
 
+def need_update() -> bool:
+    # if we don't have a version, we need an update
+    # if we have a version and it is not our most recent downloaded version, we need an update
+    our_version = paths.get_current_version()
+    most_recent_downloaded_version = _get_most_recent_downloaded_version()
+
+    if our_version is None:
+        return True
+    elif our_version != most_recent_downloaded_version:
+        return True
+    else:
+        return False
+
+
 def download_version_if_required() -> str | None:
     while True:
         download_link = downloads.get_latest_download_link()
@@ -80,10 +94,6 @@ def try_update() -> bool:
     """
     This function assumes that the server is not running, and that we are in a safe state to update the server.
 
-    TODO FIXME: refactor to always put the current version with the exact same name.
-     this is because the windows firewall exception is based on path, and if we change the path, we need to update
-     the firewall exception, which I don't even want to try to do
-
     """
     try:
         our_version = paths.get_current_version(fail_on_updating=True)
@@ -114,9 +124,9 @@ def try_update() -> bool:
     # step one, copy the most recent downloaded version to the active directory
     src_path = os.path.join(paths.get_path_to_versions_dir(), most_recent_downloaded_version)
     dst_path = os.path.join(active_dir, most_recent_downloaded_version)
+    path_to_current = os.path.join(active_dir, "current")
 
     if our_version:
-        path_to_current = os.path.join(active_dir, our_version)
         if not os.path.exists(path_to_current):
             raise RuntimeError(f"Current version does not exist: {path_to_current}")
 
@@ -188,6 +198,9 @@ def try_update() -> bool:
     if our_version:
         shutil.rmtree(path_to_current)
 
+    # step five, rename the new version to current
+    os.rename(dst_path, path_to_current)
+
     # step five, write the .version file
     version_file = os.path.join(active_dir, ".version")
     with open(version_file, "w") as f:
@@ -201,5 +214,4 @@ def try_update() -> bool:
 
 
 if __name__ == '__main__':
-    # download_version_if_required()
     try_update()

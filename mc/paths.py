@@ -160,11 +160,11 @@ def get_path_to_minecraft_server_exe(fail_on_updating: bool = True) -> str:
 
     """
     try:
-        version = get_current_version(
+        _ = get_current_version(
             fail_on_updating=fail_on_updating
         )
     except RuntimeError as e:
         raise RuntimeError("Server is updating, cannot get path to minecraft server exe") from e
 
     # try to find folder the same as the version
-    return os.path.join(get_path_to_active_dir(), version, "bedrock_server.exe")
+    return os.path.join(get_path_to_active_dir(), "current", "bedrock_server.exe")
