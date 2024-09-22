@@ -21,6 +21,11 @@ def _get_most_recent_downloaded_version():
 
     versions.sort(reverse=True)
 
+    if len(versions) > 5:
+        # if we have more than 5 versions, delete the oldest
+        for version in versions[5:]:
+            shutil.rmtree(os.path.join(versions_dir, version))
+
     return versions[0]
 
 

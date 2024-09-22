@@ -5,6 +5,9 @@ import os
 from threading import Thread, RLock
 import logging
 import datetime
+import dotenv
+
+dotenv.load_dotenv(".env")
 
 _log = logging.getLogger(__name__)
 
@@ -40,22 +43,24 @@ def slow_update():
     _current_runtime.send_command("say Server will be restarting in 15 minutes for an update!")
 
     # sleep for 10 minutes
-    time.sleep(5)
+    time.sleep(600)
 
     # send a message to the server that we will be updating in 5 minutes
     _current_runtime.send_command("say Server will be restarting in 5 minutes for an update!!")
 
     # sleep for 4 minutes
-    time.sleep(4)
+    time.sleep(240)
 
     # send a message to the server that we will be updating in 1 minute
     _current_runtime.send_command("say Server will be restarting in 1 minute for an update!!!")
 
     # sleep for a minute
-    time.sleep(3)
+    time.sleep(60)
 
     # send a message to the server that we will be updating now
     _current_runtime.send_command("say Server is restarting for an update!!!!")
+
+    time.sleep(0.5)
 
     # stop the server
     _current_runtime.stop()
@@ -158,6 +163,9 @@ def main():
 
     # start the runtime
     _current_runtime.start()
+
+    # quick enable coordinates
+    _current_runtime.send_command("gamerule showcoordinates true")
 
     # start the maintain loop thread
     maintain_thread = Thread(target=maintain_loop, daemon=True)

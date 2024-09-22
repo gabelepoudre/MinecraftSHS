@@ -30,7 +30,7 @@ def get_path_to_logs_dir() -> str:
             _log.warning(f"MC_LOGS_DIR is set to '{env_var}', but it is not a directory")
 
     _path_to_logs_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"))  # root/logs
-    _log.info(f"Using default data directory: {_path_to_logs_dir}")
+    _log.info(f"Using default logs directory: {_path_to_logs_dir}")
     return _path_to_logs_dir
 
 
