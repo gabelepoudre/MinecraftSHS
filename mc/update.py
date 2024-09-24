@@ -50,9 +50,9 @@ def download_version_if_required() -> str | None:
         if download_link is not None:
             break
         else:
-            _log.error("Failed to retrieve most recent version, trying again in 60 seconds...")
+            _log.error("Failed to retrieve most recent version, trying again in 120 seconds...")
 
-        time.sleep(60)
+        time.sleep(120)
 
     # we have a download link, lets get the version
     version = downloads.get_version_from_download_link(download_link)
