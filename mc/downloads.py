@@ -8,15 +8,10 @@ import zipfile
 _log = logging.getLogger(__name__)
 
 # looking for, want to get the link
-"""
-</label>
-<a href="https://minecraft.azureedge.net/bin-win/bedrock-server-1.21.30.03.zip" 
-aria-label="Download Minecraft Dedicated Server software for Windows" class="btn btn-disabled-outline mt-4 downloadlink" role="button" data-platform="serverBedrockWindows" tabindex="0" aria-disabled="true">Download </a>
-</div>
-"""
+pattern = re.compile(r"bedrock-server-\d+\.\d+\.\d+\.\d+\.zip")
 
-# need to specifically get the windows installer
-_compiled = re.compile(r'href="https://minecraft.azureedge.net/bin-win/bedrock-server-([0-9.]+).zip"')
+
+# so we will need to make the regex more general
 
 
 def get_version_from_download_link(download_link: str):
@@ -53,12 +48,60 @@ def get_latest_download_link():
     if r.status_code != 200:
         _log.error(f"Could not get download link, status code: {r.status_code}")
         return None
-    matches = _compiled.findall(r.text)
-    if not matches:
+    # we want to match on any new download link, and so we want to find the indices where we see a version.zip
+    # e.g. 1.21.30.03.zip, and then use that to determine which is the windows download link
+    matches = pattern.findall(r.text)
+
+    # now, to get the full links, we need to get the https:// part of the link
+
+    full_links = []
+
+    for match in matches:
+        # walking backwards, find https://
+        start = r.text.rfind("https://", 0, r.text.find(match))
+        if start == -1:
+            _log.error("Could not get download link, no https:// found")
+            continue
+        full_link = r.text[start:r.text.find(match) + len(match)]
+        full_links.append(full_link)
+
+    # now that we have links, throw out bad ones
+    illegal_chars = ">< \n"  # would appear if our search was bad
+    to_remove = []
+    for link in full_links:
+        if any(char in link for char in illegal_chars):
+            to_remove.append(link)
+    for link in to_remove:
+        full_links.remove(link)
+
+    # now throw out any that don't contain the string "win"
+    to_remove = []
+    for link in full_links:
+        if "win" not in link:
+            to_remove.append(link)
+    for link in to_remove:
+        full_links.remove(link)
+
+    # now throw out any that contain "preview"
+    to_remove = []
+    for link in full_links:
+        if "preview" in link:
+            to_remove.append(link)
+    for link in to_remove:
+        full_links.remove(link)
+
+    # now dedupe via set
+    full_links = list(set(full_links))
+
+    # we should hopefully have one link left
+    if len(full_links) > 1:
+        _log.error("Could not get download link, too many matches in HTML")
+        return None
+    elif len(full_links) == 0:
         _log.error("Could not get download link, no matches in HTML")
         return None
-    version = matches[0]
-    return f"https://minecraft.azureedge.net/bin-win/bedrock-server-{version}.zip"
+    else:
+        return full_links[0]
 
 
 def download_and_extract(download_link: str) -> bool:

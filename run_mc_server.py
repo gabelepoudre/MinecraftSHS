@@ -21,11 +21,11 @@ class ThreadSafeFileLogger(logging.Handler):
 
     def emit(self, record):
         """
-        Emit a record to the file, which will be in the log dir, and will be to the current hour
+        Emit a record to the file, which will be in the log dir, and will be to the current day
         """
         current_time = datetime.datetime.now()
         log_dir = mc.paths.get_path_to_logs_dir()
-        log_file = os.path.join(log_dir, f"{current_time.strftime('%Y-%m-%d_%H')}.log")
+        log_file = os.path.join(log_dir, f"{current_time.strftime('%Y-%m-%d')}.log")
 
         with self.lock:
             with open(log_file, "a") as f:
