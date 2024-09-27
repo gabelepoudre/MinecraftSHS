@@ -11,6 +11,7 @@ import time
 import datetime
 from threading import Thread, RLock
 from mc import paths
+import zipfile
 
 _print_log = logging.getLogger("out")
 _log = logging.getLogger(__name__)
@@ -129,20 +130,25 @@ class ServerRuntime:
             os.mkdir(backup_dir)
 
         backup_subdir = os.path.join(backup_dir, self.get_current_level_name())
-        backup_subdir_current_time = os.path.join(backup_subdir, datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+        backup_file_current_time = os.path.join(
+            backup_subdir,
+            datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S.zip")
+        )
 
         root_path = os.path.dirname(self.path_to_exe)
         world_path = os.path.join(root_path, "worlds", self.get_current_level_name())
 
-        # for each file flatly and subdir, try to copy it. If it fails, debug log it and continue
+        # for each file flatly and subdir, try to compress and add to zip
         with self.__lock:
             for root, dirs, files in os.walk(world_path):
                 for file in files:
                     try:
                         src = os.path.join(root, file)
-                        dst = os.path.join(backup_subdir_current_time, file)
-                        os.makedirs(os.path.dirname(dst), exist_ok=True)
-                        shutil.copy(src, dst)
+                        dst = os.path.relpath(src, world_path)
+                        with zipfile.ZipFile(
+                                backup_file_current_time, 'a', zipfile.ZIP_DEFLATED, compresslevel=9
+                        ) as zip_ref:
+                            zip_ref.write(src, dst)
                     except Exception as e:
                         _log.debug(f"Error copying file in backup: {e}")
 
