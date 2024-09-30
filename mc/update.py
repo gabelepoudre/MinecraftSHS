@@ -88,12 +88,17 @@ def get_most_recent_update_thread():
 
     """
     while True:
-        download_version_if_required()
+        try:
+            download_version_if_required()
 
-        # check again in 5-40 minutes (to avoid spamming the server, and maybe make it look more human)
-        minutes_to_sleep = 60 * 5 * ((random.random() * 3) + 1)
-        _log.debug(f"Sleeping for {minutes_to_sleep:.2f} seconds...")
-        time.sleep(minutes_to_sleep)
+            # check again in 5-40 minutes (to avoid spamming the server, and maybe make it look more human)
+            minutes_to_sleep = 60 * 5 * ((random.random() * 3) + 1)
+            _log.debug(f"Sleeping for {minutes_to_sleep:.2f} seconds...")
+            time.sleep(minutes_to_sleep)
+        except Exception as e:
+            _log.critical("Unexpected exception in update thread", exc_info=e)
+            _log.error("Sleeping for 5 minutes before trying again...")
+            time.sleep(60 * 5)
 
 
 def try_update() -> bool:
@@ -102,119 +107,128 @@ def try_update() -> bool:
 
     """
     try:
-        our_version = paths.get_current_version(fail_on_updating=True)
-    except RuntimeError as e:
-        raise RuntimeError("Server is updating, cannot update...") from e
+        try:
+            our_version = paths.get_current_version(fail_on_updating=True)
+        except RuntimeError as e:
+            _log.critical("Server is updating, cannot update...")
+            raise RuntimeError("Server is updating, cannot update...") from e
 
-    if our_version is None:
-        _log.info("No version found, which probably means this is first start...")
-
-    most_recent_downloaded_version = _get_most_recent_downloaded_version()
-    if most_recent_downloaded_version is None:  # we should have downloaded a version by now
-        _log.error("No versions downloaded, cannot update...")
         if our_version is None:
-            raise RuntimeError("No versions downloaded, and out version is None, which means we are in a bad state...")
-        return False
+            _log.info("No version found, which probably means this is first start...")
 
-    if our_version == most_recent_downloaded_version:
-        _log.info(f"Server is up to date: {our_version}")
-        return False
+        most_recent_downloaded_version = _get_most_recent_downloaded_version()
+        if most_recent_downloaded_version is None:  # we should have downloaded a version by now
+            _log.error("No versions downloaded, cannot update...")
+            if our_version is None:
+                _log.critical("No versions downloaded, and out version is None, which means we are in a bad state...")
+                raise RuntimeError("No versions downloaded, and out version is None, which means we are in a bad state...")
+            return False
 
-    # we are updating! first thing first, we need to create the .updating_to file
-    active_dir = paths.get_path_to_active_dir()
-    updating_to_file = os.path.join(active_dir, ".updating_to")
-    with open(updating_to_file, "w") as f:
-        f.write(most_recent_downloaded_version)
-        _log.info(f"Updating to version: {most_recent_downloaded_version}")
+        if our_version == most_recent_downloaded_version:
+            _log.info(f"Server is up to date: {our_version}")
+            return False
 
-    # step one, copy the most recent downloaded version to the active directory
-    src_path = os.path.join(paths.get_path_to_versions_dir(), most_recent_downloaded_version)
-    dst_path = os.path.join(active_dir, most_recent_downloaded_version)
-    path_to_current = os.path.join(active_dir, "current")
+        # we are updating! first thing first, we need to create the .updating_to file
+        active_dir = paths.get_path_to_active_dir()
+        updating_to_file = os.path.join(active_dir, ".updating_to")
+        with open(updating_to_file, "w") as f:
+            f.write(most_recent_downloaded_version)
+            _log.info(f"Updating to version: {most_recent_downloaded_version}")
 
-    if our_version:
-        if not os.path.exists(path_to_current):
-            raise RuntimeError(f"Current version does not exist: {path_to_current}")
+        # step one, copy the most recent downloaded version to the active directory
+        src_path = os.path.join(paths.get_path_to_versions_dir(), most_recent_downloaded_version)
+        dst_path = os.path.join(active_dir, most_recent_downloaded_version)
+        path_to_current = os.path.join(active_dir, "current")
 
-    if os.path.exists(dst_path):
-        raise RuntimeError(f"Destination path already exists, cannot update: {dst_path}")
+        if our_version:
+            if not os.path.exists(path_to_current):
+                _log.critical(f"Current version does not exist: {path_to_current}")
+                raise RuntimeError(f"Current version does not exist: {path_to_current}")
 
-    if not os.path.exists(src_path):
-        raise RuntimeError(f"Source path does not exist, cannot update: {src_path}")
+        if os.path.exists(dst_path):
+            _log.critical(f"Destination path already exists, cannot update: {dst_path}")
+            raise RuntimeError(f"Destination path already exists, cannot update: {dst_path}")
 
-    _log.info(f"Copying {src_path} to {dst_path}")
+        if not os.path.exists(src_path):
+            _log.critical(f"Source path does not exist, cannot update: {src_path}")
+            raise RuntimeError(f"Source path does not exist, cannot update: {src_path}")
 
-    shutil.copytree(src_path, dst_path)
+        _log.info(f"Copying {src_path} to {dst_path}")
 
-    # step two, make one full backup of the current version ( if we have one )
-    if our_version:
-        backup_dir = paths.get_path_to_backup_dir()
-        update_backup_dir = os.path.join(backup_dir, f"updates")
-        this_update_backup_file = os.path.join(
-            update_backup_dir,
-            f"{our_version}_to_{most_recent_downloaded_version}.zip"
-        )
-        os.makedirs(update_backup_dir, exist_ok=True)
+        shutil.copytree(src_path, dst_path)
 
-        _log.info(f"Backing up current version to: {this_update_backup_file}")
-        # back up with high compression
-        with zipfile.ZipFile(
-                this_update_backup_file, 'w', zipfile.ZIP_DEFLATED, compresslevel=9
-        ) as zip_ref:
-            for root, dirs, files in os.walk(path_to_current):  # noqa  # defined above if we have a current version
-                for file in files:
-                    src = os.path.join(root, file)
-                    dst = os.path.relpath(src, path_to_current)
-                    zip_ref.write(src, dst)
+        # step two, make one full backup of the current version ( if we have one )
+        if our_version:
+            backup_dir = paths.get_path_to_backup_dir()
+            update_backup_dir = os.path.join(backup_dir, f"updates")
+            this_update_backup_file = os.path.join(
+                update_backup_dir,
+                f"{our_version}_to_{most_recent_downloaded_version}.zip"
+            )
+            os.makedirs(update_backup_dir, exist_ok=True)
 
-    # step three, copy the necessary files from the current version to the new version (blowing away any existing files)
-    if our_version:
-        files_to_copy = [
-            "allowlist.json",
-            "permissions.json",
-            "server.properties",
-        ]
+            _log.info(f"Backing up current version to: {this_update_backup_file}")
+            # back up with high compression
+            with zipfile.ZipFile(
+                    this_update_backup_file, 'w', zipfile.ZIP_DEFLATED, compresslevel=9
+            ) as zip_ref:
+                for root, dirs, files in os.walk(path_to_current):  # noqa  # defined above if we have a current version
+                    for file in files:
+                        src = os.path.join(root, file)
+                        dst = os.path.relpath(src, path_to_current)
+                        zip_ref.write(src, dst)
 
-        dirs_to_copy = [
-            "worlds",
-        ]
+        # step three, copy the necessary files from the current version to the new version (blowing away any existing files)
+        if our_version:
+            files_to_copy = [
+                "allowlist.json",
+                "permissions.json",
+                "server.properties",
+            ]
 
-        for file in files_to_copy:
-            src = os.path.join(path_to_current, file)
-            dst = os.path.join(dst_path, file)
-            if not os.path.exists(src):
-                _log.debug(f"File does not exist, skipping: {src}")
-                continue
-            if os.path.exists(dst):
-                os.remove(dst)
-            shutil.copy(src, dst)
+            dirs_to_copy = [
+                "worlds",
+            ]
 
-        for dir_ in dirs_to_copy:
-            src = os.path.join(path_to_current, dir_)
-            dst = os.path.join(dst_path, dir_)
-            if not os.path.exists(src):
-                _log.debug(f"Directory does not exist, skipping: {src}")
-                continue
-            if os.path.exists(dst):
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
-        _log.info(f"Copied necessary files from current version to new version")
+            for file in files_to_copy:
+                src = os.path.join(path_to_current, file)
+                dst = os.path.join(dst_path, file)
+                if not os.path.exists(src):
+                    _log.debug(f"File does not exist, skipping: {src}")
+                    continue
+                if os.path.exists(dst):
+                    os.remove(dst)
+                shutil.copy(src, dst)
 
-    # step four, delete the previous version
-    if our_version:
-        shutil.rmtree(path_to_current)
+            for dir_ in dirs_to_copy:
+                src = os.path.join(path_to_current, dir_)
+                dst = os.path.join(dst_path, dir_)
+                if not os.path.exists(src):
+                    _log.debug(f"Directory does not exist, skipping: {src}")
+                    continue
+                if os.path.exists(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+            _log.info(f"Copied necessary files from current version to new version")
 
-    # step five, rename the new version to current
-    os.rename(dst_path, path_to_current)
+        # step four, delete the previous version
+        if our_version:
+            shutil.rmtree(path_to_current)
 
-    # step five, write the .version file
-    version_file = os.path.join(active_dir, ".version")
-    with open(version_file, "w") as f:
-        f.write(most_recent_downloaded_version)
-        _log.info(f"Updated to version: {most_recent_downloaded_version}")
+        # step five, rename the new version to current
+        os.rename(dst_path, path_to_current)
 
-    # step six, delete the .updating_to file
-    os.remove(updating_to_file)
+        # step five, write the .version file
+        version_file = os.path.join(active_dir, ".version")
+        with open(version_file, "w") as f:
+            f.write(most_recent_downloaded_version)
+            _log.info(f"Updated to version: {most_recent_downloaded_version}")
+
+        # step six, delete the .updating_to file
+        os.remove(updating_to_file)
+    except Exception as e:
+        _log.critical("Unexpected exception during update", exc_info=e)
+        raise e
 
     return True
 

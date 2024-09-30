@@ -135,7 +135,7 @@ def download_and_extract(download_link: str) -> bool:
                 f.write(chunk)
         _log.info(f"Downloaded to: {download_path}")
 
-        extract_dir = os.path.join(paths.get_path_to_versions_dir(), version)
+        extract_dir = os.path.join(paths.get_path_to_versions_dir(), version+"_inprogress")
         if os.path.exists(extract_dir):
             _log.error(f"Extract directory already exists, not extracting: {extract_dir}")
             return False
@@ -148,6 +148,9 @@ def download_and_extract(download_link: str) -> bool:
 
         # delete zip
         os.remove(download_path)
+
+        # rename directory
+        os.rename(extract_dir, extract_dir.replace("_inprogress", ""))
 
         return True
 
