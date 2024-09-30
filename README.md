@@ -9,3 +9,7 @@ Config for storage found in .env, conda environment in environment.yml
 You'll need to try to start once, and then use the download in `/active/current` to change your server.properties. These carry over updates
 
 I'm sure there is lots of missing QOL and outright bugs, but it works for me
+
+### TODO
+- auto 4:00am restarts (with backup just in case)
+- delete backups more than 48 hours old
