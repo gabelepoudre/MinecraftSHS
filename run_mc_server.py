@@ -150,6 +150,20 @@ def main():
             success_update = mc.update.try_update()
             if not success_update:
                 raise RuntimeError("Update failed, cannot start server")
+    else:
+        # get the most recent version from site in case we are not updating
+        version_link = mc.downloads.get_latest_download_link()
+        version = mc.downloads.get_version_from_download_link(version_link)
+        most_recent_downloaded_version = mc.update._get_most_recent_downloaded_version()  # noqa
+        if version != most_recent_downloaded_version:
+            _log.warning("Most recent downloaded version does not match most recent version from site. Downloading")
+            mc.update.download_version_if_required()
+            _log.info("Trying on-start update...")
+            success_update = False
+            while not success_update:
+                success_update = mc.update.try_update()
+                if not success_update:
+                    raise RuntimeError("Update failed, cannot start server")
 
     # start a thread to scrape for new updates (decoupled from the actual update process)
     update_thread = Thread(target=mc.update.get_most_recent_update_thread, daemon=True)

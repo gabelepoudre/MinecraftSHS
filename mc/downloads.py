@@ -122,7 +122,14 @@ def download_and_extract(download_link: str) -> bool:
             return False
 
         # download
-        r = requests.get(download_link)
+        _log.info(f"Sending download request")
+        r = requests.get(
+            download_link,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.minecraft.net/en-us/download/server/bedrock"
+            }
+        )
         if r.status_code != 200:
             _log.error(f"Could not download file, status code: {r.status_code}")
             return False
@@ -130,6 +137,7 @@ def download_and_extract(download_link: str) -> bool:
         # save to versions directory
         download_path = paths.get_path_to_versions_dir()
         download_path = os.path.join(download_path, f"bedrock-server-{version}.zip")
+        _log.info(f"Downloading to: {download_path}")
         with open(download_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=1024**2):
                 f.write(chunk)
