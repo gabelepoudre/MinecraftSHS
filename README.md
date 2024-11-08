@@ -11,5 +11,7 @@ You'll need to try to start once, and then use the download in `/active/current`
 I'm sure there is lots of missing QOL and outright bugs, but it works for me
 
 ### TODO
-- auto 4:00am restarts (with backup just in case)
-- delete backups more than 48 hours old
+- auto 4:00am (local?) restarts (with backup just in case)
+- delete runtime backups more than 48 hours old
+- update backups need to be sorted by world name
+- arbitrary on-start commands
