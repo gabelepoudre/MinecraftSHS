@@ -47,12 +47,13 @@ def need_update() -> bool:
 def download_version_if_required() -> str | None:
     while True:
         download_link = downloads.get_latest_download_link()
+        sleep_time = random.random() * 15 * 60  # sleep between 0 and 15 minutes
         if download_link is not None:
             break
         else:
-            _log.error("Failed to retrieve most recent version, trying again in 120 seconds...")
+            _log.error(f"Failed to retrieve most recent version, trying again in {sleep_time:.2f} seconds...")
 
-        time.sleep(120)
+        time.sleep(sleep_time)
 
     # we have a download link, lets get the version
     version = downloads.get_version_from_download_link(download_link)

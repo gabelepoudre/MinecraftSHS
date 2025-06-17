@@ -10,10 +10,6 @@ _log = logging.getLogger(__name__)
 # looking for, want to get the link
 pattern = re.compile(r"bedrock-server-\d+\.\d+\.\d+\.\d+\.zip")
 
-
-# so we will need to make the regex more general
-
-
 def get_version_from_download_link(download_link: str):
     # e.g. https://minecraft.azureedge.net/bin-win/bedrock-server-1.21.30.03.zip
 
@@ -32,6 +28,68 @@ def get_version_from_download_link(download_link: str):
 
 
 def get_latest_download_link():
+    """
+    Get the latest download link for the Bedrock server from Minecraft's website.
+    This will try to get the latest link, and if it fails, it will try to get the old link.
+    :return: The download link or None if it fails.
+    """
+    # first try the new API
+    download_link = get_latest_download_link_new()
+    if download_link is not None:
+        return download_link
+
+    # if that fails, try the old HTML method
+    _log.warning("Could not get new download link, trying old method...")
+    return get_latest_download_link_old()
+
+
+def get_latest_download_link_new(api_version: str = "v1.0"):
+    # post June 2025 links have new links GET dynamically
+    # get with short timeout, it seems like it goes down frequently (or is heavily rate limited)
+    try:
+        r = requests.get(
+            f"https://net-secondary.web.minecraft-services.net/api/{api_version}/download/links",
+            timeout=30,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.minecraft.net/"
+            }
+        )
+    except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout):
+        _log.error("Could not get download link, connection error...")
+        return None
+    if r.status_code != 200:
+        _log.error(f"Could not get download link, status code: {r.status_code}")
+        return None
+
+    resp_json = r.json()
+
+    try:
+        result = resp_json["result"]
+        links = result["links"]
+    except KeyError:
+        _log.error("Could not get download link, response JSON does not contain expected keys", exc_info=True)
+        return None
+
+    correct_link = None
+    for link in links:  # obj
+        try:
+            if link['downloadType'] == "serverBedrockWindows":
+                correct_link = link["downloadUrl"]
+        except KeyError as e:
+            _log.warning(f"Could not get download link, response JSON does not contain expected keys:"
+                         f" {e}", exc_info=True)
+            continue
+
+    if correct_link is None:
+        _log.error("Could not get download link, no link found for serverBedrockWindows")
+        return None
+
+    return correct_link
+
+
+def get_latest_download_link_old():
+    # pre June 2025 links were burned into html
     # get with short timeout, it seems like it goes down frequently (or is heavily rate limited)
     try:
         r = requests.get(
@@ -139,11 +197,11 @@ def download_and_extract(download_link: str) -> bool:
         download_path = os.path.join(download_path, f"bedrock-server-{version}.zip")
         _log.info(f"Downloading to: {download_path}")
         with open(download_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1024**2):
+            for chunk in r.iter_content(chunk_size=1024 ** 2):
                 f.write(chunk)
         _log.info(f"Downloaded to: {download_path}")
 
-        extract_dir = os.path.join(paths.get_path_to_versions_dir(), version+"_inprogress")
+        extract_dir = os.path.join(paths.get_path_to_versions_dir(), version + "_inprogress")
         if os.path.exists(extract_dir):
             _log.error(f"Extract directory already exists, not extracting: {extract_dir}")
             return False
