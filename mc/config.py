@@ -92,3 +92,36 @@ def get_manifest_ignore_patterns() -> list[str]:
     raw = os.environ.get("MC_BACKUP_MANIFEST_IGNORE", "")
     raw = raw.strip().strip("'\"")
     return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+DEFAULT_ALERT_COOLDOWN_MINUTES = 30
+
+
+def get_alert_webhook_url() -> str | None:
+    """MC_ALERT_WEBHOOK_URL, or None if unset or empty (the default: no webhook)."""
+    raw = os.environ.get("MC_ALERT_WEBHOOK_URL")
+    if raw is None:
+        return None
+    raw = raw.strip().strip("'\"").strip()
+    return raw or None
+
+
+def get_alert_min_level() -> int:
+    """MC_ALERT_MIN_LEVEL: ERROR or CRITICAL (default)."""
+    raw = os.environ.get("MC_ALERT_MIN_LEVEL")
+    if raw is None or raw.strip() == "":
+        return logging.CRITICAL
+    value = raw.strip().strip("'\"").upper()
+    if value in ("ERROR", "CRITICAL"):
+        return getattr(logging, value)
+    _log.warning(f"MC_ALERT_MIN_LEVEL is set to '{raw}', which is not ERROR or CRITICAL, using default CRITICAL")
+    return logging.CRITICAL
+
+
+def get_alert_in_game() -> bool:
+    return get_bool_env("MC_ALERT_IN_GAME", True)
+
+
+def get_alert_cooldown_minutes() -> int:
+    return get_int_env("MC_ALERT_COOLDOWN_MINUTES", DEFAULT_ALERT_COOLDOWN_MINUTES)
+

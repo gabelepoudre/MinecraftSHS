@@ -32,6 +32,16 @@ class ThreadSafeFileLogger(logging.Handler):
                 f.write(f"{record.asctime} - {record.name} - {record.levelname} - {record.message}\n")
 
 
+def _set_runtime(runtime: mc.ServerRuntime | None):
+    """
+    Set the current runtime and tell the admin alerts which runtime (if any) can receive in-game messages.
+
+    """
+    global _current_runtime
+    _current_runtime = runtime
+    mc.alerts.set_in_game_sender(runtime.send_command if runtime is not None else None)
+
+
 def _get_daily_restart_time() -> datetime.time | None:
     """
     Parse MC_DAILY_RESTART_UTC (HH:MM, UTC) from the environment. Returns None if unset or invalid (feature disabled).
@@ -104,9 +114,10 @@ def restart_sequence(reason: str, update: bool):
         _log.error(f"Backup before restart failed, restarting anyway: {e}")
 
     # stop the server
+    mc.alerts.set_in_game_sender(None)
     _current_runtime.stop()
 
-    _current_runtime = None
+    _set_runtime(None)
 
     if update:
         update_success = False
@@ -120,7 +131,7 @@ def restart_sequence(reason: str, update: bool):
     path_to_exe = mc.paths.get_path_to_minecraft_server_exe()
 
     # create the runtime
-    _current_runtime = mc.ServerRuntime(path_to_exe)
+    _set_runtime(mc.ServerRuntime(path_to_exe))
 
     # start the runtime
     _current_runtime.start()
@@ -146,14 +157,15 @@ def maintain_loop():
             # health check that the server is still running
             if _current_runtime.process is not None and _current_runtime.process.poll() is not None:
                 _log.critical("Server process has died unceremoniously, restarting after a delay...")
+                mc.alerts.set_in_game_sender(None)
                 try:
                     _current_runtime.stop()
                 except Exception:  # noqa
                     pass
-                _current_runtime = None
+                _set_runtime(None)
 
                 path_to_exe = mc.paths.get_path_to_minecraft_server_exe()
-                _current_runtime = mc.ServerRuntime(path_to_exe)
+                _set_runtime(mc.ServerRuntime(path_to_exe))
                 time.sleep(5)
                 _current_runtime.start()
 
@@ -202,6 +214,12 @@ def main():
     out_log.addHandler(fh)
     _log.addHandler(fh)
 
+    # admin alerts (CRITICAL logs by default): in game, and to a webhook if MC_ALERT_WEBHOOK_URL is set. Attached to the
+    # application loggers only, not "out" (raw server output)
+    alert_handler = mc.alerts.create_handler()
+    lib_log.addHandler(alert_handler)
+    _log.addHandler(alert_handler)
+
     # check if we need to update
     if mc.update.need_update():
         _log.info("Updating server...")
@@ -236,7 +254,7 @@ def main():
     path_to_exe = mc.paths.get_path_to_minecraft_server_exe()
 
     # create the runtime
-    _current_runtime = mc.ServerRuntime(path_to_exe)
+    _set_runtime(mc.ServerRuntime(path_to_exe))
 
     # start the runtime
     _current_runtime.start()

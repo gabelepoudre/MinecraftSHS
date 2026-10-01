@@ -9,5 +9,6 @@ from . import server_runtime  # noqa
 from . import versions  # noqa
 from . import update  # noqa
 from . import downloads  # noqa
+from . import alerts  # noqa
 
 from .server_runtime import ServerRuntime  # noqa

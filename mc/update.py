@@ -8,11 +8,51 @@ import logging
 import time
 import zipfile
 import datetime
+import threading
 
 _log = logging.getLogger(__name__)
 
 
 UPDATE_BACKUP_SUBDIR = "updates"
+
+# After this many consecutive failures to get a download link or to download, log one CRITICAL (which raises an admin
+# alert, see mc/alerts.py). Single failures are common (the endpoint is flaky) and are only logged at ERROR.
+# Override with MC_ALERT_SCRAPE_FAILURE_THRESHOLD.
+SCRAPE_FAILURE_THRESHOLD = 6
+
+_failure_lock = threading.Lock()
+_consecutive_failures = 0
+_failure_threshold: int | None = None
+
+
+def _get_failure_threshold() -> int:
+    global _failure_threshold
+    if _failure_threshold is None:  # read once so an invalid value only warns once
+        _failure_threshold = config.get_int_env("MC_ALERT_SCRAPE_FAILURE_THRESHOLD", SCRAPE_FAILURE_THRESHOLD, minimum=1)
+    return _failure_threshold
+
+
+def _record_check_failure():
+    """
+    Count one failure to obtain a download link or to download. At the threshold, log one CRITICAL and start counting
+    again, so a persistent outage re-alerts every threshold attempts (the alert cooldown limits how often that is
+    actually sent). The message text is constant so identical alerts dedupe.
+    """
+    global _consecutive_failures
+    threshold = _get_failure_threshold()
+    with _failure_lock:
+        _consecutive_failures += 1
+        escalate = _consecutive_failures >= threshold
+        if escalate:
+            _consecutive_failures = 0
+    if escalate:
+        _log.critical(f"Could not check for or download a server update after {threshold} consecutive attempts")
+
+
+def _record_check_success():
+    global _consecutive_failures
+    with _failure_lock:
+        _consecutive_failures = 0
 
 # Update backups skip vendor binaries at the root of the server dir (bedrock_server.exe etc.): the update recreates
 # them from the downloaded version, so they are large and redundant. Everything else is kept, not just the four items
@@ -97,6 +137,14 @@ def need_update() -> bool:
         return False
 
 
+def _download(download_link: str, version: str) -> str | None:
+    if downloads.download_and_extract(download_link):
+        _record_check_success()
+        return version
+    _record_check_failure()
+    return None
+
+
 def download_version_if_required() -> str | None:
     while True:
         download_link = downloads.get_latest_download_link()
@@ -105,6 +153,7 @@ def download_version_if_required() -> str | None:
             break
         else:
             _log.error(f"Failed to retrieve most recent version, trying again in {sleep_time:.2f} seconds...")
+            _record_check_failure()
 
         time.sleep(sleep_time)
 
@@ -112,6 +161,7 @@ def download_version_if_required() -> str | None:
     version = downloads.get_version_from_download_link(download_link)
     if version is None:
         _log.error(f"Could not determine version from download link, not downloading: {download_link}")
+        _record_check_failure()
         return None
 
     # lets get our most recent downloaded version
@@ -123,10 +173,10 @@ def download_version_if_required() -> str | None:
         if current_version is not None and _versions.parse_version(current_version) is not None                 and not _versions.is_newer(version, current_version):
             _log.warning(f"Latest version from site ({version}) is not newer than current version "
                          f"({current_version}), not downloading")
+            _record_check_success()  # the check itself worked, there is just nothing to download
             return None
         _log.info("No versions downloaded yet, downloading...")
-        downloads.download_and_extract(download_link)
-        return version
+        return _download(download_link, version)
     elif _versions.is_newer(version, most_recent_downloaded_version):
         _log.info(f"New version available: {version}, downloading...")
 
@@ -136,14 +186,15 @@ def download_version_if_required() -> str | None:
             _log.error(f"Version already exists, not downloading: {version}")
             return None
 
-        downloads.download_and_extract(download_link)
-        return version
+        return _download(download_link, version)
     elif version == most_recent_downloaded_version:
         _log.info(f"Latest version already downloaded: {version}")
+        _record_check_success()
         return version
     else:
         _log.warning(f"Latest version from site ({version}) is older than most recent downloaded version "
                      f"({most_recent_downloaded_version}), not downloading")
+        _record_check_success()
         return None
 
 
@@ -164,6 +215,7 @@ def get_most_recent_update_thread():
             time.sleep(minutes_to_sleep)
         except Exception as e:
             _log.critical("Unexpected exception in update thread", exc_info=e)
+            _record_check_failure()
             _log.error("Sleeping for 5 minutes before trying again...")
             time.sleep(60 * 5)
 

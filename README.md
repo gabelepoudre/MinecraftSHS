@@ -35,6 +35,50 @@ Retention is configured with these optional env vars (see `.env.template`):
 
 A backup is kept if any rule claims it, the newest backup is never deleted, and an empty policy keeps everything.
 
+### Admin alerts
+
+A simple way to surface critical problems. Every CRITICAL log record (server process died, update failed, ...) and
+sustained update check failures (by default 6 consecutive failures to find or download an update, after which one
+CRITICAL is logged) raise an alert to up to two places:
+
+1. In game, as a short `say` message (`[Admin alert] ...`, one line, about 100 characters), if the server is running.
+2. A JSON POST to a webhook, **only if `MC_ALERT_WEBHOOK_URL` is set**. It is not set by default, so by default alerts
+   are in-game only and no HTTP request is ever made.
+
+Enable the webhook by adding `MC_ALERT_WEBHOOK_URL=https://...` to `.env`. The request body is JSON
+(`Content-Type: application/json`):
+
+```json
+{
+  "content": "[CRITICAL] mc.update: Unexpected exception during update",
+  "text": "[CRITICAL] mc.update: Unexpected exception during update",
+  "level": "CRITICAL",
+  "logger": "mc.update",
+  "message": "Unexpected exception during update",
+  "host": "MC-SERVER",
+  "server_version": "1.26.52.3",
+  "timestamp": "2026-10-01T04:00:00+00:00",
+  "repeat_count": 1,
+  "traceback": null
+}
+```
+
+`content` works with Discord webhooks and `text` with Slack and Teams style incoming webhooks (both hold the same short
+message, `content` is capped at 1900 characters); use the other fields if you write your own receiver. `traceback` is
+the last 3000 characters of the exception text, if there was one.
+
+Alerts are sent from a background thread with a short timeout and a couple of retries, so a dead webhook never blocks
+the server, and webhook failures are not logged as alerts. Identical alerts (same logger and message) inside the
+cooldown window are suppressed; the next one that gets through reports how many occurred in `repeat_count`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `MC_ALERT_WEBHOOK_URL` | unset | webhook endpoint, unset or empty disables the webhook |
+| `MC_ALERT_MIN_LEVEL` | CRITICAL | `ERROR` or `CRITICAL` |
+| `MC_ALERT_IN_GAME` | true | show alerts in game |
+| `MC_ALERT_COOLDOWN_MINUTES` | 30 | suppress identical alerts for this long (0 disables) |
+| `MC_ALERT_SCRAPE_FAILURE_THRESHOLD` | 6 | consecutive update check/download failures before a CRITICAL |
+
 Tests: `python -m pytest tests`
 
 ### TODO
