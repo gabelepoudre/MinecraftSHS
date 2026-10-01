@@ -241,9 +241,6 @@ def main():
     # start the runtime
     _current_runtime.start()
 
-    # quick enable coordinates
-    _current_runtime.send_command("gamerule showcoordinates true")
-
     # start the maintain loop thread
     maintain_thread = Thread(target=maintain_loop, daemon=True)
     maintain_thread.start()

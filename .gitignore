@@ -170,3 +170,5 @@ cython_debug/
 # ignore eveything in the /logs dir that isn't a README.md file
 /logs/*
 !logs/README.md
+# local startup commands (the versioned template is startup_commands.template.txt)
+/startup_commands.txt

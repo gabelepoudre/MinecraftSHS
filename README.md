@@ -41,4 +41,4 @@ Tests: `python -m pytest tests`
 - ~~auto 4:00am restarts (with backup just in case)~~ (done, set `MC_DAILY_RESTART_UTC`, e.g. `04:00`, in .env)
 - ~~delete runtime backups more than 48 hours old~~ (superseded by tiered retention, see Backups)
 - ~~update backups need to be sorted by world name~~ (superseded: update backups are timestamped and pruned, see Backups)
-- arbitrary on-start commands
+- ~~arbitrary on-start commands~~ (done, edit `startup_commands.txt`, created from `startup_commands.template.txt` on first start; `$$sleep(N)` waits N seconds; path via `MC_STARTUP_COMMANDS_FILE`)

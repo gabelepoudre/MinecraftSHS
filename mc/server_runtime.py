@@ -10,7 +10,7 @@ import logging
 import time
 import datetime
 from threading import Thread, RLock
-from mc import paths, config, retention, manifest
+from mc import paths, config, retention, manifest, startup_commands
 import zipfile
 
 _print_log = logging.getLogger("out")
@@ -75,6 +75,13 @@ class ServerRuntime:
             Thread(target=self._backup_thread, daemon=True).start()
             self._stdout_thread.start()
             self._stderr_thread.start()
+            Thread(target=self._startup_commands_thread, daemon=True).start()
+
+    def _startup_commands_thread(self):
+        try:
+            startup_commands.run_startup_commands(self.send_command, lambda: self.started(blocking=False))
+        except Exception as e:
+            _log.error(f"Error running startup commands: {e}")
 
     def get_current_level_name(self):
         if self._current_level_name is not None:

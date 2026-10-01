@@ -1,0 +1,9 @@
+# Commands sent to the server every time it starts (including restarts). One per line.
+# This is the versioned template. On first start it is copied to startup_commands.txt (not versioned), which you edit.
+# Set MC_STARTUP_COMMANDS_FILE in .env to keep that file somewhere else.
+#
+# Blank lines and lines starting with # are ignored.
+# $$sleep(N) waits N seconds before the next line, e.g. $$sleep(5)
+# We only pipe text to the server and cannot see its replies, so use $$sleep to space commands out if needed.
+
+gamerule showcoordinates true
