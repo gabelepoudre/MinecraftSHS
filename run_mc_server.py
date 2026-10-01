@@ -32,48 +32,89 @@ class ThreadSafeFileLogger(logging.Handler):
                 f.write(f"{record.asctime} - {record.name} - {record.levelname} - {record.message}\n")
 
 
-def slow_update():
-    # assume we know we need an update and have a runtime
+def _get_daily_restart_time() -> datetime.time | None:
+    """
+    Parse MC_DAILY_RESTART_UTC (HH:MM, UTC) from the environment. Returns None if unset or invalid (feature disabled).
+
+    """
+    raw = os.environ.get("MC_DAILY_RESTART_UTC")
+    if raw is None:
+        return None
+
+    raw = raw.replace("'", "").replace('"', "").strip()
+    if not raw:
+        return None
+
+    try:
+        return datetime.datetime.strptime(raw, "%H:%M").time()
+    except ValueError:
+        _log.warning(f"MC_DAILY_RESTART_UTC is set to '{raw}', but it is not a valid HH:MM time, ignoring")
+        return None
+
+
+def _daily_restart_due(restart_time: datetime.time, last_restart: datetime.datetime) -> bool:
+    """
+    True if today's scheduled restart time (UTC) has passed and we haven't restarted since it.
+
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    scheduled_today = datetime.datetime.combine(now.date(), restart_time, tzinfo=datetime.timezone.utc)
+    return now >= scheduled_today > last_restart
+
+
+def restart_sequence(reason: str, update: bool):
+    """
+    Shared graceful restart: warn players over 15 minutes, back up, stop, optionally update, and start a new runtime.
+
+    :param reason: Short human-readable reason shown to players, e.g. "an update"
+    :param update: If True, run the update process while the server is stopped
+    """
     global _current_runtime
 
     if _current_runtime is None:
-        raise RuntimeError("No runtime to update")
+        raise RuntimeError("No runtime to restart")
 
-    # send a message to the server that we will be updating in 15 minutes
-    _current_runtime.send_command("say Server will be restarting in 15 minutes for an update!")
+    # send a message to the server that we will be restarting in 15 minutes
+    _current_runtime.send_command(f"say Server will be restarting in 15 minutes for {reason}!")
 
     # sleep for 10 minutes
     time.sleep(600)
 
-    # send a message to the server that we will be updating in 5 minutes
-    _current_runtime.send_command("say Server will be restarting in 5 minutes for an update!!")
+    # send a message to the server that we will be restarting in 5 minutes
+    _current_runtime.send_command(f"say Server will be restarting in 5 minutes for {reason}!!")
 
     # sleep for 4 minutes
     time.sleep(240)
 
-    # send a message to the server that we will be updating in 1 minute
-    _current_runtime.send_command("say Server will be restarting in 1 minute for an update!!!")
+    # send a message to the server that we will be restarting in 1 minute
+    _current_runtime.send_command(f"say Server will be restarting in 1 minute for {reason}!!!")
 
     # sleep for a minute
     time.sleep(60)
 
-    # send a message to the server that we will be updating now
-    _current_runtime.send_command("say Server is restarting for an update!!!!")
+    # send a message to the server that we will be restarting now
+    _current_runtime.send_command(f"say Server is restarting for {reason}!!!!")
 
     time.sleep(0.5)
+
+    # backup just in case (the update process also makes its own backup of the current version)
+    try:
+        _current_runtime.backup()
+    except Exception as e:
+        _log.error(f"Backup before restart failed, restarting anyway: {e}")
 
     # stop the server
     _current_runtime.stop()
 
     _current_runtime = None
 
-    # update the version
-    update_success = False
-    while not update_success:
-        update_success = mc.update.try_update()
-        if not update_success:
-            _log.critical("Update failed, trying again in 5 seconds...")
-            time.sleep(5)
+    if update:
+        update_success = False
+        while not update_success:
+            update_success = mc.update.try_update()
+            if not update_success:
+                _log.critical("Update failed, trying again in 5 seconds...")
+                time.sleep(5)
 
     # get the path to the executable
     path_to_exe = mc.paths.get_path_to_minecraft_server_exe()
@@ -85,8 +126,20 @@ def slow_update():
     _current_runtime.start()
 
 
+def slow_update():
+    # assume we know we need an update and have a runtime
+    restart_sequence("an update", update=True)
+
+
 def maintain_loop():
     global _current_runtime
+
+    daily_restart_time = _get_daily_restart_time()
+    if daily_restart_time is not None:
+        _log.info(f"Daily restart enabled at {daily_restart_time.strftime('%H:%M')} UTC")
+    # starting counts as a restart, so starting after today's time does not immediately restart
+    last_restart = datetime.datetime.now(datetime.timezone.utc)
+    last_daily_check = 0.0
 
     while True:
         if _current_runtime is not None:
@@ -107,7 +160,15 @@ def maintain_loop():
             # check if we need to update
             if mc.update.need_update():
                 slow_update()
+                last_restart = datetime.datetime.now(datetime.timezone.utc)
                 # at the end of slow_update, we will have a new runtime
+            elif daily_restart_time is not None and time.monotonic() - last_daily_check >= 60:
+                # check the daily restart roughly once a minute
+                last_daily_check = time.monotonic()
+                if _daily_restart_due(daily_restart_time, last_restart):
+                    _log.info("Daily restart time reached, restarting...")
+                    restart_sequence("the daily restart", update=False)
+                    last_restart = datetime.datetime.now(datetime.timezone.utc)
         else:
             raise RuntimeError("No runtime, cannot continue...")
 

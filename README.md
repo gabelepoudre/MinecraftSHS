@@ -38,7 +38,7 @@ A backup is kept if any rule claims it, the newest backup is never deleted, and 
 Tests: `python -m pytest tests`
 
 ### TODO
-- auto 4:00am (local?) restarts (with backup just in case)
+- ~~auto 4:00am restarts (with backup just in case)~~ (done, set `MC_DAILY_RESTART_UTC`, e.g. `04:00`, in .env)
 - ~~delete runtime backups more than 48 hours old~~ (superseded by tiered retention, see Backups)
 - ~~update backups need to be sorted by world name~~ (superseded: update backups are timestamped and pruned, see Backups)
 - arbitrary on-start commands
