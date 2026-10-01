@@ -1,7 +1,7 @@
 import random
 
 from mc import downloads
-from mc import paths, config, retention
+from mc import paths, config, retention, versions as _versions
 import os
 import shutil
 import logging
@@ -62,12 +62,17 @@ def _get_most_recent_downloaded_version():
 
     # grab all of the folder names in the versions directory
     versions_dir = paths.get_path_to_versions_dir()
-    versions = os.listdir(versions_dir)
-    versions = [v for v in versions if os.path.isdir(os.path.join(versions_dir, v))]
+    # only completed versions: directory names that parse as a version. This ignores (and never deletes) things like
+    # <version>_inprogress directories from an in-flight or crashed download, and any junk we did not create
+    versions = [
+        v for v in os.listdir(versions_dir)
+        if os.path.isdir(os.path.join(versions_dir, v)) and _versions.parse_version(v) is not None
+    ]
     if not versions:
         return None
 
-    versions.sort(reverse=True)
+    # numeric order, newest first ("1.26.52.3" is newer than "1.26.9.1")
+    versions.sort(key=_versions.parse_version, reverse=True)
 
     keep = config.get_keep_downloaded_versions()
     if len(versions) > keep:
@@ -86,7 +91,7 @@ def need_update() -> bool:
 
     if our_version is None:
         return True
-    elif our_version != most_recent_downloaded_version:
+    elif _versions.is_newer(most_recent_downloaded_version, our_version):
         return True
     else:
         return False
@@ -105,15 +110,24 @@ def download_version_if_required() -> str | None:
 
     # we have a download link, lets get the version
     version = downloads.get_version_from_download_link(download_link)
+    if version is None:
+        _log.error(f"Could not determine version from download link, not downloading: {download_link}")
+        return None
 
     # lets get our most recent downloaded version
     most_recent_downloaded_version = _get_most_recent_downloaded_version()
 
     if most_recent_downloaded_version is None:
+        # never downgrade: if we have no downloads but are already running a newer version, do nothing
+        current_version = paths.get_current_version()
+        if current_version is not None and _versions.parse_version(current_version) is not None                 and not _versions.is_newer(version, current_version):
+            _log.warning(f"Latest version from site ({version}) is not newer than current version "
+                         f"({current_version}), not downloading")
+            return None
         _log.info("No versions downloaded yet, downloading...")
         downloads.download_and_extract(download_link)
         return version
-    elif version != most_recent_downloaded_version:
+    elif _versions.is_newer(version, most_recent_downloaded_version):
         _log.info(f"New version available: {version}, downloading...")
 
         # quick, lets make sure this version doesn't already exist (i.e. our most-recent check gave us a bad result)
@@ -124,9 +138,13 @@ def download_version_if_required() -> str | None:
 
         downloads.download_and_extract(download_link)
         return version
-    else:
+    elif version == most_recent_downloaded_version:
         _log.info(f"Latest version already downloaded: {version}")
         return version
+    else:
+        _log.warning(f"Latest version from site ({version}) is older than most recent downloaded version "
+                     f"({most_recent_downloaded_version}), not downloading")
+        return None
 
 
 def get_most_recent_update_thread():
@@ -175,6 +193,10 @@ def try_update() -> bool:
 
         if our_version == most_recent_downloaded_version:
             _log.info(f"Server is up to date: {our_version}")
+            return False
+        if our_version is not None and not _versions.is_newer(most_recent_downloaded_version, our_version):
+            _log.warning(f"Most recent downloaded version ({most_recent_downloaded_version}) is not newer than "
+                         f"current version ({our_version}), not updating")
             return False
 
         # we are updating! first thing first, we need to create the .updating_to file

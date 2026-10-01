@@ -6,6 +6,7 @@ dotenv.load_dotenv("../.env")
 
 from . import paths  # noqa
 from . import server_runtime  # noqa
+from . import versions  # noqa
 from . import update  # noqa
 from . import downloads  # noqa
 

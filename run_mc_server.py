@@ -214,9 +214,11 @@ def main():
     else:
         # get the most recent version from site in case we are not updating
         version_link = mc.downloads.get_latest_download_link()
-        version = mc.downloads.get_version_from_download_link(version_link)
+        version = mc.downloads.get_version_from_download_link(version_link) if version_link is not None else None
         most_recent_downloaded_version = mc.update._get_most_recent_downloaded_version()  # noqa
-        if version != most_recent_downloaded_version:
+        if version is None:
+            _log.warning("Could not determine the most recent version from site, starting with what we have")
+        elif most_recent_downloaded_version is None or mc.versions.is_newer(version, most_recent_downloaded_version):
             _log.warning("Most recent downloaded version does not match most recent version from site. Downloading")
             mc.update.download_version_if_required()
             _log.info("Trying on-start update...")
