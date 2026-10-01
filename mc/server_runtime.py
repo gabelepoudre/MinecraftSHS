@@ -10,7 +10,7 @@ import logging
 import time
 import datetime
 from threading import Thread, RLock
-from mc import paths
+from mc import paths, config, retention, manifest
 import zipfile
 
 _print_log = logging.getLogger("out")
@@ -119,50 +119,109 @@ class ServerRuntime:
         self.send_command("say Backing up server...")
         time.sleep(0.5)
 
-        self.send_command("save hold")
-        time.sleep(10)
-        self.send_command("save query")
-        time.sleep(1)
-        # okay, now let's just copy whatever files we can
+        held = False
+        try:
+            held = True  # set first: even if the write fails part way, we want to try to resume
+            self.send_command("save hold")
+            time.sleep(10)
+            self.send_command("save query")
+            time.sleep(1)
+            # okay, now let's just copy whatever files we can
+            created = self._backup_world_files()
+        finally:
+            if held:
+                try:
+                    self.send_command("save resume")
+                except Exception as e:
+                    _log.error(f"!!! Failed to send 'save resume' after backup: {e}")
 
+        if created:
+            self.send_command("say Backup complete!")
+            self._prune_world_backups()
+        else:
+            self.send_command("say No world changes, backup skipped")
+
+    def _backup_world_files(self) -> bool:
+        """
+        Zip the world directory. Returns False if the world is unchanged since the last backup (nothing written).
+        """
+        level_name = self.get_current_level_name()
         backup_dir = paths.get_path_to_backup_dir()
-        if not os.path.exists(backup_dir):
-            os.mkdir(backup_dir)
-
-        backup_subdir = os.path.join(backup_dir, self.get_current_level_name())
-        backup_file_current_time = os.path.join(
-            backup_subdir,
-            datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S.zip")
-        )
+        backup_subdir = os.path.join(backup_dir, level_name)
+        os.makedirs(backup_subdir, exist_ok=True)
 
         root_path = os.path.dirname(self.path_to_exe)
-        world_path = os.path.join(root_path, "worlds", self.get_current_level_name())
+        world_path = os.path.join(root_path, "worlds", level_name)
+        if not os.path.isdir(world_path):
+            raise FileNotFoundError(f"World directory does not exist: {world_path}")
 
-        # for each file flatly and subdir, try to compress and add to zip
+        backup_file = os.path.join(
+            backup_subdir,
+            datetime.datetime.now().strftime(retention.TIMESTAMP_FORMAT + ".zip")
+        )
+        partial_file = backup_file + ".partial"
+        manifest_file = os.path.join(backup_subdir, manifest.MANIFEST_FILE_NAME)
+
         with self.__lock:
-            for root, dirs, files in os.walk(world_path):
-                for file in files:
-                    try:
-                        src = os.path.join(root, file)
-                        dst = os.path.relpath(src, world_path)
-                        with zipfile.ZipFile(
-                                backup_file_current_time, 'a', zipfile.ZIP_DEFLATED, compresslevel=9
-                        ) as zip_ref:
-                            zip_ref.write(src, dst)
-                    except Exception as e:
-                        _log.debug(f"Error copying file in backup: {e}")
+            new_manifest = manifest.build_manifest(world_path, config.get_manifest_ignore_patterns())
+            has_previous_backup = any(
+                retention.parse_world_backup_name(n) is not None for n in os.listdir(backup_subdir)
+            )
+            if has_previous_backup and manifest.load_manifest(manifest_file) == new_manifest:
+                _log.info(f"World '{level_name}' unchanged since last backup, skipping")
+                return False
 
-        self.send_command("save resume")
-        self.send_command("say Backup complete!")
+            failed = 0
+            try:
+                # open the zip once, but keep the per-file try/except so one locked file doesn't abort the backup
+                with zipfile.ZipFile(partial_file, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zip_ref:
+                    for root, dirs, files in os.walk(world_path):
+                        for file in files:
+                            src = os.path.join(root, file)
+                            try:
+                                zip_ref.write(src, os.path.relpath(src, world_path))
+                            except Exception as e:
+                                failed += 1
+                                _log.warning(f"Error copying file in backup: {src}: {e}")
+                os.replace(partial_file, backup_file)
+            except BaseException:
+                try:
+                    os.remove(partial_file)
+                except OSError:
+                    pass
+                raise
+
+        if failed:
+            _log.warning(f"Backup {backup_file} completed with {failed} file(s) skipped")
+        try:
+            manifest.save_manifest(manifest_file, new_manifest)
+        except Exception as e:
+            _log.error(f"Failed to save backup manifest: {e}")
+        _log.info(f"Created backup: {backup_file}")
+        return True
+
+    def _prune_world_backups(self):
+        try:
+            backup_subdir = os.path.join(paths.get_path_to_backup_dir(), self.get_current_level_name())
+            retention.prune_dir(
+                backup_subdir,
+                retention.parse_world_backup_name,
+                config.get_world_backup_policy(),
+                dry_run=config.get_prune_dry_run(),
+            )
+        except Exception as e:
+            _log.error(f"Error pruning world backups: {e}")
 
     def _backup_thread(self):
         while True:  # daemon thread
             try:
                 time.sleep(60 * 60)
+                if not self.started(blocking=False):
+                    _log.info("Server stopped, ending backup thread")
+                    return
                 self.backup()
             except Exception as e:
-                _log.error(f"!!! Error in backup thread: {e}")
-                break
+                _log.error(f"!!! Error in backup thread: {e}", exc_info=e)
 
     def stop(self):
         if not self.started():

@@ -1,14 +1,61 @@
 import random
 
 from mc import downloads
-from mc import paths
+from mc import paths, config, retention
 import os
 import shutil
 import logging
 import time
 import zipfile
+import datetime
 
 _log = logging.getLogger(__name__)
+
+
+UPDATE_BACKUP_SUBDIR = "updates"
+
+# Update backups skip vendor binaries at the root of the server dir (bedrock_server.exe etc.): the update recreates
+# them from the downloaded version, so they are large and redundant. Everything else is kept, not just the four items
+# the update carries over (worlds, server.properties, allowlist.json, permissions.json), because the update replaces
+# the whole directory and would otherwise silently lose anything else (custom packs, extra config).
+_VENDOR_BINARY_SUFFIXES = (".exe", ".dll", ".pdb")
+
+
+def _is_vendor_binary(rel_path: str) -> bool:
+    return os.sep not in rel_path and "/" not in rel_path and rel_path.lower().endswith(_VENDOR_BINARY_SUFFIXES)
+
+
+def _backup_current_for_update(path_to_current: str, dest_file: str):
+    partial = dest_file + ".partial"
+    try:
+        # back up with high compression
+        with zipfile.ZipFile(partial, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zip_ref:
+            for root, dirs, files in os.walk(path_to_current):
+                for file in files:
+                    src = os.path.join(root, file)
+                    dst = os.path.relpath(src, path_to_current)
+                    if _is_vendor_binary(dst):
+                        continue
+                    zip_ref.write(src, dst)
+        os.replace(partial, dest_file)
+    except BaseException:
+        try:
+            os.remove(partial)
+        except OSError:
+            pass
+        raise
+
+
+def _prune_update_backups():
+    try:
+        retention.prune_dir(
+            os.path.join(paths.get_path_to_backup_dir(), UPDATE_BACKUP_SUBDIR),
+            retention.parse_update_backup_name,
+            config.get_update_backup_policy(),
+            dry_run=config.get_prune_dry_run(),
+        )
+    except Exception as e:
+        _log.error(f"Error pruning update backups: {e}")
 
 
 def _get_most_recent_downloaded_version():
@@ -22,9 +69,10 @@ def _get_most_recent_downloaded_version():
 
     versions.sort(reverse=True)
 
-    if len(versions) > 5:
-        # if we have more than 5 versions, delete the oldest
-        for version in versions[5:]:
+    keep = config.get_keep_downloaded_versions()
+    if len(versions) > keep:
+        # if we have more than the configured number of versions, delete the oldest
+        for version in versions[keep:]:
             shutil.rmtree(os.path.join(versions_dir, version))
 
     return versions[0]
@@ -161,23 +209,16 @@ def try_update() -> bool:
         # step two, make one full backup of the current version ( if we have one )
         if our_version:
             backup_dir = paths.get_path_to_backup_dir()
-            update_backup_dir = os.path.join(backup_dir, f"updates")
+            update_backup_dir = os.path.join(backup_dir, UPDATE_BACKUP_SUBDIR)
             this_update_backup_file = os.path.join(
                 update_backup_dir,
-                f"{our_version}_to_{most_recent_downloaded_version}.zip"
+                f"{datetime.datetime.now().strftime(retention.TIMESTAMP_FORMAT)}"
+                f"_{our_version}_to_{most_recent_downloaded_version}.zip"
             )
             os.makedirs(update_backup_dir, exist_ok=True)
 
             _log.info(f"Backing up current version to: {this_update_backup_file}")
-            # back up with high compression
-            with zipfile.ZipFile(
-                    this_update_backup_file, 'w', zipfile.ZIP_DEFLATED, compresslevel=9
-            ) as zip_ref:
-                for root, dirs, files in os.walk(path_to_current):  # noqa  # defined above if we have a current version
-                    for file in files:
-                        src = os.path.join(root, file)
-                        dst = os.path.relpath(src, path_to_current)
-                        zip_ref.write(src, dst)
+            _backup_current_for_update(path_to_current, this_update_backup_file)
 
         # step three, copy the necessary files from the current version to the new version (blowing away any existing files)
         if our_version:
@@ -227,6 +268,8 @@ def try_update() -> bool:
 
         # step six, delete the .updating_to file
         os.remove(updating_to_file)
+
+        _prune_update_backups()
     except Exception as e:
         _log.critical("Unexpected exception during update", exc_info=e)
         raise e
