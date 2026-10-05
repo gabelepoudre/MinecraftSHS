@@ -47,6 +47,22 @@ never reached the server. Most likely cause: the account does not own Bedrock (a
 since the Xbox token step succeeded). So a listener bot needs an account that owns Minecraft. The broadcaster never
 calls this endpoint, so this result does not apply to it.
 
+**Follow-up tests (2026-10-05): no auth bypass at startup or without internet.** Throwaway BDS 1.26.52.3, RakNet,
+loopback, `allow-list=false` (note: this version's default `server.properties` ships `allow-list=true`, and BDS will not
+start with that plus `online-mode=false`).
+
+- Control: with `online-mode=false`, unsigned bedrock-protocol logins join immediately.
+- Startup race: with `online-mode=true`, 74 unsigned logins fired every 300 ms from before launch to 35 s after. 71 were
+  kicked with `not_authenticated` and 3 timed out before the port opened. A login already in flight when the port opened
+  was rejected 180 ms after "Server started". No window.
+- No internet: online-mode BDS opens HTTPS connections to Microsoft (150.171.x.x:443) right after start. With outbound
+  traffic blocked by a Windows firewall rule for the exe, it logs "Waiting for Minecraft services...", answers no logins
+  at all (clients time out), then after about 67 s logs "Could not connect to Minecraft services. This is required to
+  accept connections in online mode." and stops itself. It fails closed.
+- **Operational note for this repo:** if the live machine has no internet when the server starts, BDS shuts itself
+  down after about a minute. `maintain_loop` will treat that as a crash and restart it repeatedly until the connection
+  returns, which shows up as repeated `server_crash` events and CRITICAL alerts.
+
 ## Answers to the open questions
 
 ### 1. NetherNet
