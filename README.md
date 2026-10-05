@@ -79,6 +79,46 @@ cooldown window are suppressed; the next one that gets through reports how many 
 | `MC_ALERT_COOLDOWN_MINUTES` | 30 | suppress identical alerts for this long (0 disables) |
 | `MC_ALERT_SCRAPE_FAILURE_THRESHOLD` | 6 | consecutive update check/download failures before a CRITICAL |
 
+### Event log
+
+An append-only record of what happened, for statistics later (playtime, crashes, ...). One JSON object per line, one
+file per UTC day: `MC_EVENTS_DIR/YYYY-MM-DD.jsonl`, by default `data/events/` (`MC_DATA_DIR/events`). The directory is
+created if missing. Files are kept forever; they are small (a busy day is a few kilobytes).
+
+```json
+{"v": 1, "ts": "2026-10-05T12:00:00.000+00:00", "type": "player_join", "source": "console", "player": "Steve", "xuid": "2535412345678901"}
+```
+
+Every event has `v` (schema version), `ts` (UTC, ISO 8601), `type` and `source` (`console`: parsed from the server
+output, `app`: this wrapper). Adding a field keeps `v`; renaming a field or changing its meaning bumps it. All events
+are written by `emit()` in `mc/events.py`, where the event types are listed; a failure to write is logged at ERROR and
+never stops the server.
+
+| Type | Source | Fields | When |
+| --- | --- | --- | --- |
+| `player_join` | console | `player`, `xuid` | `Player connected: ...` (`xuid` is null if the console shows none) |
+| `player_leave` | console | `player`, `xuid` | `Player disconnected: ...` |
+| `server_ready` | console | | `Server started.`, players can join |
+| `achievement` | console | `player`, `achievement` | unverified: the console line format is a guess and may never match |
+| `app_start` | app | | the wrapper started |
+| `app_exit` | app | `reason`: `stop_command`, `keyboard_interrupt`, `error` | the wrapper is exiting (nothing is written if it is killed) |
+| `server_start` | app | `version` | the server process was started |
+| `server_stop` | app | `reason`: `daily_restart`, `update`, `manual`, `exit` | the server was stopped on purpose |
+| `server_crash` | app | `version`, `exit_code` | the server process died on its own (it is restarted) |
+| `restart_scheduled` | app | `reason`: `daily_restart`, `update`; `countdown_seconds` | the 15 minute restart warning started |
+| `update_available` | app | `from_version`, `to_version` | a newer downloaded version will be installed (restart follows) |
+| `update_installed` | app | `from_version` (null on first install), `to_version` | an update finished |
+| `update_failed` | app | `from_version`, `to_version`, `error` | an update raised an error |
+| `backup_completed` | app | `level`, `skipped` (true if the world was unchanged) | hourly or pre-restart world backup |
+| `backup_failed` | app | `level`, `error` | a world backup raised an error |
+
+A `server_stop` or `server_crash` (or a gap after the last app event) ends every open player session. The console
+formats come from known BDS output and have not yet been checked against a live server.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `MC_EVENTS_DIR` | `MC_DATA_DIR/events` | where the event log is written |
+
 Tests: `python -m pytest tests`
 
 ### TODO

@@ -10,11 +10,18 @@ import logging
 import time
 import datetime
 from threading import Thread, RLock
-from mc import paths, config, retention, manifest, startup_commands
+from mc import paths, config, retention, manifest, startup_commands, events
 import zipfile
 
 _print_log = logging.getLogger("out")
 _log = logging.getLogger(__name__)
+
+
+def _current_version_or_none() -> str | None:
+    try:
+        return paths.get_current_version()
+    except Exception:  # noqa
+        return None
 
 
 class ServerRuntime:
@@ -32,7 +39,7 @@ class ServerRuntime:
 
     def __del__(self):
         try:
-            self.stop()
+            self.stop(reason="exit")
         except Exception:  # noqa
             pass
 
@@ -41,6 +48,7 @@ class ServerRuntime:
         try:
             for line in self.process.stdout:
                 _print_log.info(f"{line}")
+                events.parse_console_line(line)  # player joins/leaves etc. to the event log, never raises
         except Exception as e:
             _log.error(f"Error reading stdout: {e}, dying...")
 
@@ -70,6 +78,9 @@ class ServerRuntime:
                 stdin=subprocess.PIPE,
                 universal_newlines=True
             )
+            # before the output threads start, so it comes before any console event of this run
+            events.emit(events.SERVER_START, events.SOURCE_APP, version=_current_version_or_none())
+
             self._stdout_thread = Thread(target=self.__stdout_packer)
             self._stderr_thread = Thread(target=self.__stderr_packer)
             Thread(target=self._backup_thread, daemon=True).start()
@@ -135,6 +146,9 @@ class ServerRuntime:
             time.sleep(1)
             # okay, now let's just copy whatever files we can
             created = self._backup_world_files()
+        except Exception as e:
+            events.emit(events.BACKUP_FAILED, events.SOURCE_APP, level=self._current_level_name, error=str(e))
+            raise
         finally:
             if held:
                 try:
@@ -142,6 +156,7 @@ class ServerRuntime:
                 except Exception as e:
                     _log.error(f"!!! Failed to send 'save resume' after backup: {e}")
 
+        events.emit(events.BACKUP_COMPLETED, events.SOURCE_APP, level=self._current_level_name, skipped=not created)
         if created:
             self.send_command("say Backup complete!")
             self._prune_world_backups()
@@ -230,11 +245,18 @@ class ServerRuntime:
             except Exception as e:
                 _log.error(f"!!! Error in backup thread: {e}", exc_info=e)
 
-    def stop(self):
+    def stop(self, reason: str = "manual"):
+        """
+        Stop the server (gracefully, then kill it after 5 seconds).
+
+        :param reason: for the server_stop event: daily_restart, update, manual or exit. No event is written if the
+        process had already died (that is a server_crash, logged by the caller)
+        """
         if not self.started():
             return
 
         with self.__lock:
+            was_running = self.process.poll() is None
             self.send_command("stop")
             pro: subprocess.Popen = self.process
             self.process = None
@@ -254,3 +276,6 @@ class ServerRuntime:
 
         self._stdout_thread = None
         self._stderr_thread = None
+
+        if was_running:
+            events.emit(events.SERVER_STOP, events.SOURCE_APP, reason=reason)

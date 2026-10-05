@@ -6,6 +6,7 @@ from threading import Thread, RLock
 import logging
 import datetime
 import dotenv
+from mc import events
 
 dotenv.load_dotenv(".env")
 
@@ -84,6 +85,10 @@ def restart_sequence(reason: str, update: bool):
     if _current_runtime is None:
         raise RuntimeError("No runtime to restart")
 
+    # restart_sequence is only used for updates and the daily restart
+    event_reason = "update" if update else "daily_restart"
+    events.emit(events.RESTART_SCHEDULED, events.SOURCE_APP, reason=event_reason, countdown_seconds=15 * 60)
+
     # send a message to the server that we will be restarting in 15 minutes
     _current_runtime.send_command(f"say Server will be restarting in 15 minutes for {reason}!")
 
@@ -115,7 +120,7 @@ def restart_sequence(reason: str, update: bool):
 
     # stop the server
     mc.alerts.set_in_game_sender(None)
-    _current_runtime.stop()
+    _current_runtime.stop(reason=event_reason)
 
     _set_runtime(None)
 
@@ -157,6 +162,8 @@ def maintain_loop():
             # health check that the server is still running
             if _current_runtime.process is not None and _current_runtime.process.poll() is not None:
                 _log.critical("Server process has died unceremoniously, restarting after a delay...")
+                events.emit(events.SERVER_CRASH, events.SOURCE_APP,
+                            version=mc.paths.get_current_version(), exit_code=_current_runtime.process.poll())
                 mc.alerts.set_in_game_sender(None)
                 try:
                     _current_runtime.stop()
@@ -171,6 +178,8 @@ def maintain_loop():
 
             # check if we need to update
             if mc.update.need_update():
+                events.emit(events.UPDATE_AVAILABLE, events.SOURCE_APP, from_version=mc.paths.get_current_version(),
+                            to_version=mc.update._get_most_recent_downloaded_version())  # noqa
                 slow_update()
                 last_restart = datetime.datetime.now(datetime.timezone.utc)
                 # at the end of slow_update, we will have a new runtime
@@ -220,6 +229,24 @@ def main():
     lib_log.addHandler(alert_handler)
     _log.addHandler(alert_handler)
 
+    # app_start/app_exit bracket everything, so gaps where the whole app was down are visible in the event log (a
+    # killed process or closed console window writes no app_exit, which the gap also shows)
+    events.emit(events.APP_START, events.SOURCE_APP)
+    exit_reason = "error"
+    try:
+        _run()
+        exit_reason = "stop_command"
+    except KeyboardInterrupt:
+        exit_reason = "keyboard_interrupt"
+        raise
+    finally:
+        events.emit(events.APP_EXIT, events.SOURCE_APP, reason=exit_reason)
+
+
+def _run():
+    """Update if needed, start the server and the maintain loop, then pass console input to the server until "stop"."""
+    global _current_runtime
+
     # check if we need to update
     if mc.update.need_update():
         _log.info("Updating server...")
@@ -267,7 +294,7 @@ def main():
         try:
             command = input()
             if command == "stop":
-                _current_runtime.stop()
+                _current_runtime.stop(reason="manual")
                 break
             _current_runtime.send_command(command)
         except Exception as e:
@@ -276,7 +303,7 @@ def main():
         except KeyboardInterrupt as e:
             _log.info("Exiting...")
             try:
-                _current_runtime.stop()
+                _current_runtime.stop(reason="exit")
             except BaseException:  # noqa
                 pass
 

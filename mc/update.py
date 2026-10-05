@@ -1,7 +1,7 @@
 import random
 
 from mc import downloads
-from mc import paths, config, retention, versions as _versions
+from mc import paths, config, retention, events, versions as _versions
 import os
 import shutil
 import logging
@@ -225,6 +225,9 @@ def try_update() -> bool:
     This function assumes that the server is not running, and that we are in a safe state to update the server.
 
     """
+    # for the update events, filled in as we find out
+    our_version = None
+    most_recent_downloaded_version = None
     try:
         try:
             our_version = paths.get_current_version(fail_on_updating=True)
@@ -346,7 +349,12 @@ def try_update() -> bool:
         _prune_update_backups()
     except Exception as e:
         _log.critical("Unexpected exception during update", exc_info=e)
+        events.emit(events.UPDATE_FAILED, events.SOURCE_APP,
+                    from_version=our_version, to_version=most_recent_downloaded_version, error=str(e))
         raise e
+
+    events.emit(events.UPDATE_INSTALLED, events.SOURCE_APP,
+                from_version=our_version, to_version=most_recent_downloaded_version)
 
     return True
 

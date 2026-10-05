@@ -8,6 +8,7 @@ _path_to_backup_dir: str | None = None
 _path_to_active_dir: str | None = None
 _path_to_versions_dir: str | None = None
 _path_to_logs_dir: str | None = None
+_path_to_events_dir: str | None = None
 
 
 def get_path_to_logs_dir() -> str:
@@ -135,6 +136,35 @@ def get_path_to_versions_dir() -> str:
     _path_to_versions_dir = os.path.join(get_path_to_data_dir(), "versions")
     _log.info(f"Using default versions directory: {_path_to_versions_dir}")
     return _path_to_versions_dir
+
+
+def get_path_to_events_dir() -> str:
+    # either the environment variable, or root/data/events. Unlike the other directories, a missing MC_EVENTS_DIR is
+    # created: it only holds the event log (see mc/events.py)
+    global _path_to_events_dir
+    if _path_to_events_dir is not None:
+        return _path_to_events_dir
+
+    # check env var MC_EVENTS_DIR
+    env_var = os.environ.get("MC_EVENTS_DIR")
+    if env_var is not None:
+        # passing quotes is a common mistake
+        env_var = env_var.replace("'", "").replace('"', "").strip()
+
+    if env_var:
+        env_var = os.path.abspath(os.path.normpath(env_var))
+        try:
+            os.makedirs(env_var, exist_ok=True)
+            _path_to_events_dir = env_var
+            _log.info(f"Using MC_EVENTS_DIR: {_path_to_events_dir}")
+            return _path_to_events_dir
+        except OSError as e:
+            _log.warning(f"MC_EVENTS_DIR is set to '{env_var}', but it could not be created: {e}")
+
+    _path_to_events_dir = os.path.join(get_path_to_data_dir(), "events")
+    os.makedirs(_path_to_events_dir, exist_ok=True)
+    _log.info(f"Using default events directory: {_path_to_events_dir}")
+    return _path_to_events_dir
 
 
 def get_current_version(fail_on_updating: bool = False) -> str | None:
