@@ -1,77 +1,99 @@
-# Server events add-on, event parsing and playtime tracking
+# Server events: event log, add-on, and statistics
 
 Status: plan only, not started.
 
-Goal: get richer information out of the Bedrock server than its trimmed console gives us (today: connects, disconnects, achievements). Specifically player deaths with cause, joins/leaves with stable identifiers, and optionally chat, then use those events for playtime tracking and other features. Approach: a small script add-on (behavior pack with the Script API) that prints one machine-readable line per event to the server console, plus a parser in this app that consumes those lines from the server's stdout.
+Goal: a rolling, append-only event log is the foundation and the single source of truth. Everything else (statistics, playtime, feeds) is derived from it later, on demand. Build it in three phases, each usable on its own:
 
-## Research findings (as of 2026-10-01)
+1. **Event log** from what we already have: the server console (connects, disconnects, achievements) and the app's own lifecycle (start, stop, crash, restart, update, backup). No add-on.
+2. **Add-on** as an extra event source writing into the same log: deaths with cause and killer, spawns, and other stable Script API events. No chat.
+3. **Parsers and statistics**: playtime, deaths, downtime, etc., computed by replaying the log files. Auxiliary; built when wanted.
 
-Sources: Microsoft Learn `@minecraft/server` WorldAfterEvents (stable moniker), Endstone project docs.
+## Event log format (shared by all phases)
 
-- **Stable API** (`@minecraft/server`, no beta toggle): `world.afterEvents.entityDie` (damage source, damaging entity), `playerJoin`, `playerLeave`, `playerSpawn` (with an initial-spawn flag, so it separates first spawn from respawn), `playerBreakBlock`, `playerPlaceBlock`, `playerEmote`, `playerGameModeChange`, `playerDimensionChange`, `entityHurt`, `weatherChange`, and more.
-- **Chat is experimental only.** `world.afterEvents.chatSend` (and the before-event) appear only in the experimental/pre-release API reference, marked "still in pre-release, may change or be removed". Using it requires the Beta APIs experiment enabled on the world, and risks breaking on a Mojang update. This matters for a server that auto-updates.
-- Script `console.log` / `console.warn` output is reported to reach the dedicated server's console. NOT yet verified first-hand; verify in step 0 below.
-- **Alternative: Endstone** (https://github.com/EndstoneMC/endstone), a plugin loader and Python/C++ API wrapping BDS on Windows and Linux, with `PlayerChatEvent`, `PlayerDeathEvent` etc. Gives chat without beta flags, but wraps the server executable and must track every Mojang release, which conflicts with this repo's self-updating download flow. Not recommended unless chat becomes important and the beta route proves unworkable.
+- Location: one file per UTC day, `YYYY-MM-DD.jsonl` (matches the existing daily server logs). The directory is configurable: `MC_EVENTS_DIR` env var if set, otherwise `<repo>/data/events/` (already git-ignored by the `/data/*` rule). Resolved by a `get_path_to_events_dir()` helper in `mc/paths.py` following the same pattern as `get_path_to_data_dir()` (strip quotes, normalise, cache), creating the directory if missing. Documented in `.env.template`.
+- One JSON object per line, never multi-line. Common fields: `"v":1` (schema version), `"ts"` (UTC ISO 8601), `"type"`, `"source"` (`console`, `app`, `addon`). Type-specific fields alongside, e.g. `{"v":1,"ts":"...","type":"player_join","source":"console","player":"Steve","xuid":"2535..."}`.
+- Kept indefinitely by default; the files are tiny (a busy day is kilobytes) and the history is what statistics depend on. Optional `MC_EVENT_LOG_KEEP_DAYS` (default 0 = keep forever).
+- **One central emitter.** Every event, whatever its source, goes through a single function in `mc/events.py`: `emit(event_type, source, **fields)`. It stamps `v` and `ts`, serialises, and appends to the right day's file, thread-safe (lock + append + flush per line, like `ThreadSafeFileLogger`). A write failure logs at ERROR and never interrupts the server. Nothing else writes event files.
+- **Readable call sites.** Console parsing and app actions differ only in how they decide to call `emit`; the call itself looks the same everywhere, e.g. `events.emit("server_crash", "app", version=v)`. Event type names live as constants in one place in `mc/events.py` (with a short comment per type listing its fields) so a reader can see every event the system produces in one screen. No per-type wrapper functions unless one is genuinely clearer.
+- Document every event type and its fields in a schema section of the README. Adding a field is fine; renaming or changing meaning bumps `v`.
 
-## Step 0: Verification spike (do first, small)
+## Phase 1: event log from existing sources
 
-Confirm on a throwaway local BDS instance (a scratch world, not the live one):
+### Step 1.0: console line samples (no live server)
 
-1. A minimal behavior pack with a script module that does `console.log("[MCSHS] hello")` on `world.afterEvents.worldLoad` shows the line on the server's stdout (and note the exact line format BDS wraps around it, e.g. a timestamp and `[Scripting]` tag).
-2. The exact manifest requirements: script module entry, `@minecraft/server` dependency version string that the current BDS accepts (BDS rejects packs whose dependency version it does not support), min engine version, and how the pack is activated for a world (`world_behavior_packs.json` inside `worlds/<level-name>/`).
-3. Whether anything extra is needed in `server.properties` or `config/default/permissions.json` for a stdout-only script (expected: no, since we use no `@minecraft/server-net`).
-4. For the optional chat feature only: how the Beta APIs experiment is enabled for a dedicated-server world (likely the world's `level.dat` experiments flag) and whether that has side effects (e.g. disables achievements). If this is unreasonable, drop chat.
+We cannot currently run and connect to a server for testing, so phase 1 is built and verified entirely with automated tests and mocks. Use the known BDS console formats (e.g. `[2026-10-05 12:00:00:000 INFO] Player connected: Steve, xuid: 2535...`, `Player disconnected: Steve, xuid: ..., pfid: ...`, `Server started.`) as test fixtures, keeping the regexes tolerant of prefix variations. Mark the achievement pattern as unverified. Once the code runs on the live server, compare the real lines to the fixtures and adjust.
 
-Document findings at the top of this file or in the add-on's README before building on them.
+### Step 1.1: console events
 
-## Step 1: The add-on (`addons/server_events/`, versioned in the repo)
+- In `ServerRuntime.__stdout_packer` (`mc/server_runtime.py`), pass each line to a parser in `mc/events.py` after the existing raw log write (raw logging stays unchanged). Regexes tolerant of the BDS timestamp/level prefix.
+- Events: `player_join` and `player_leave` (name, xuid), `achievement` (player, achievement text, if the console provides it), `server_ready` (the "Server started" line).
+- Unknown lines are ignored; a line that matches a pattern but fails to parse logs at DEBUG.
 
-- `manifest.json` pinned to the `@minecraft/server` version verified in step 0, with fresh UUIDs.
-- `scripts/main.js` (plain JavaScript, no build step; keep it tiny). Subscribes to:
-  - `playerJoin`, `playerLeave`: emit player name and player id.
-  - `playerSpawn`: emit with `initialSpawn` flag (respawn after death shows up here).
-  - `entityDie`, filtered to `entity.typeId === "minecraft:player"`: emit player name, `damageSource.cause`, and the killer's type id / name if present.
-  - A periodic heartbeat (e.g. every 5 minutes via `system.runInterval`) emitting the list of currently online player names (used for crash-safe playtime, see step 3).
-- Output format: one line per event, a fixed prefix and a single JSON object, for example `[MCSHS-EVENT] {"t":"death","player":"Steve","cause":"entityAttack","by":"minecraft:zombie"}`. Include a schema version field (`"v":1`). Never emit anything multi-line. Wrap every handler in try/catch so a script error can never hurt the server.
-- Chat (optional, isolated, off by default): a second script file or feature flag using `chatSend`, only activated if step 0.4 proved viable. It must fail safely: if the API is missing in a future version, the rest of the add-on keeps working.
-- Add-on `README.md` documenting events and schema.
+### Step 1.2: app lifecycle events (`source: "app"`)
 
-## Step 2: Installing the add-on automatically
+Emitted from the existing code paths in `run_mc_server.py` and `mc/server_runtime.py`:
 
-Worlds are copied across updates already (`mc/update.py` carries over `worlds/`), so a pack installed inside the world's folder survives updates.
+- `server_start` (version), `server_stop` (reason: `daily_restart`, `update`, `manual`, `exit`), `server_crash` (when the process dies unexpectedly in `maintain_loop`).
+- `restart_scheduled` (reason, countdown), `update_available` (from/to version), `update_installed`, `update_failed`.
+- `backup_completed` / `backup_failed`.
+- `app_start` / `app_exit`, so gaps where the whole app was down are visible.
 
-- New module `mc/addons.py`: on server start (before launching the process), ensure `addons/server_events` is copied into `<active>/current/worlds/<level-name>/behavior_packs/server_events/` and that `world_behavior_packs.json` in that world folder lists it (create or merge the file, preserving other packs; keep a backup before first modification). Idempotent; only copy when the add-on version changed.
-- Config: `MC_SERVER_EVENTS_ADDON` (default `true`), documented in `.env.template`. If the pack fails to load (BDS prints a script/pack error), log at ERROR (which feeds admin alerts when enabled); do not crash.
-- Because the manifest pins a dependency version, after each Mojang update the pack may stop loading. Add detection: if the add-on is enabled and no heartbeat/event line is seen within N minutes of start, log a CRITICAL "server events add-on does not appear to be running, the manifest may need updating". This leans on the existing admin alert handler.
+A `server_stop` or `server_crash` implicitly ends every open player session; phase 3 relies on this, so there is no need for heartbeats or a database to keep playtime crash-safe.
 
-## Step 3: Parsing events and tracking playtime
+### Step 1.3: tests and docs
 
-- In `mc/server_runtime.py`'s stdout reader, detect lines containing the `[MCSHS-EVENT]` prefix, parse the JSON after it (tolerate any BDS prefix before the marker; ignore malformed lines with a DEBUG log), and dispatch to registered handlers. Keep the existing raw log of stdout unchanged. New module `mc/events.py` holds the parser and a simple dispatcher (`register(event_type, callback)`).
-- Playtime tracker `mc/playtime.py`, storing into SQLite (stdlib `sqlite3`) at `<data dir>/playtime.sqlite3` (path overridable, `MC_PLAYTIME_DB`):
-  - `sessions(player_id, player_name, joined_at, left_at, closed_by)` where `closed_by` is `leave`, `heartbeat` or `server_stop`.
-  - On `playerJoin` open a session; on `playerLeave` close it.
-  - Crash safety: the heartbeat updates a `last_seen` for open sessions. On server start (and on stop in `ServerRuntime.stop`), close any session still open using its `last_seen` (or now for a clean stop), so a crash or restart never inflates playtime or leaves ghost sessions. Also reconcile: a heartbeat listing that omits a player with an open session closes it.
-  - Track by player id where available, with the latest name; handle name changes.
-  - Thread-safe (events arrive on the stdout reader thread); keep DB writes short, one connection per call or a lock.
-- Reporting: `python -m mc.playtime` prints a table of total time per player (all time, last 7 days, last 30 days), plus session count and last seen. Optionally `--json`. Keep it simple; no web UI.
-- Deaths: append to a JSONL event log `<data dir>/events/YYYY-MM-DD.jsonl` for all parsed events (deaths, joins, leaves, spawns, optional chat), with a retention setting reusing the tiered retention idea or simple max age (`MC_EVENT_LOG_KEEP_DAYS`, default 90). Add a small death counter per player in the same SQLite database.
+- Unit tests (pytest, temp directories, no real server; stub `requests`/`dotenv` if missing as existing tests do): `emit` creates the directory and day file and writes valid JSONL with `v`/`ts`/`type`/`source`, `MC_EVENTS_DIR` override and default path, day rollover at UTC midnight (inject or patch the clock), concurrent emits from several threads, write failure does not raise. Console parsing against the step 1.0 fixtures (with and without prefixes, malformed lines), checked end to end by feeding lines through the parser and reading back the files. Lifecycle events checked with a mocked `ServerRuntime`/process where practical.
+- README section "Event log": location, format, event types, env vars.
 
-## Step 4: Documentation and tests
+Stop here. When the live server next runs with this code, check the files look right, confirm the console fixtures match reality, and only then start phase 2.
 
-- `README.md`: section "Server events and playtime" covering what the add-on does, what is stable vs experimental, the env vars, and how to run the playtime report.
-- Unit tests (pytest, mock/stub where `requests`/`dotenv` are missing as in prior work; no real server): event-line parsing including BDS prefixes and malformed lines, dispatcher, playtime session logic (join/leave, crash recovery via last_seen, duplicate join, leave without join, name change, heartbeat reconciliation), report aggregation, add-on installer idempotence and `world_behavior_packs.json` merge/backup using temp directories.
-- Match existing code style; no new third-party dependencies.
+## Phase 2: add-on as an extra event source
 
-## Things you might also want later (not part of this plan)
+### Step 2.0: verification spike (scratch world only)
 
-- **Smarter backups:** the backup plan listed "skip when no players were online since the last backup" as optional. With join/leave/heartbeat events this becomes reliable and cheap. Good first follow-up.
-- **Discord/Teams feed of events:** reuse the admin alerts webhook sender (or a second `MC_EVENT_WEBHOOK_URL`) to post joins, leaves and deaths as a live feed. Rate limit it.
-- **Death leaderboard / "most time played" announcements** in-game via periodic `say`, built on the tracker.
-- **Idle-based restarts:** prefer to run the daily restart (and updates) when the server is empty, skipping the 15 minute countdown when nobody is online.
-- **Chat logging** if step 0.4 shows the beta API is acceptable, or via Endstone if it is worth taking on the loader.
-- **Other stable events** worth logging cheaply: gamemode changes, dimension changes, block break/place counts (careful: high volume).
+Research (2026-10-01, Microsoft Learn `@minecraft/server` stable API): `world.afterEvents.entityDie` (damage source, damaging entity), `playerJoin`, `playerLeave`, `playerSpawn` (with an initial-spawn flag), `playerGameModeChange`, `playerDimensionChange` and more are stable, no beta toggle. Chat is experimental only and is out of scope.
+
+Confirm on a throwaway local BDS instance:
+
+1. A minimal behavior pack whose script does `console.log("[MCSHS-EVENT] ...")` on `world.afterEvents.worldLoad` shows the line on stdout; note the exact prefix BDS adds.
+2. Manifest requirements: script module entry, the `@minecraft/server` dependency version the current BDS accepts, min engine version, activation via `worlds/<level-name>/world_behavior_packs.json`.
+3. Nothing extra is needed in `server.properties` or `permissions.json`.
+
+### Step 2.1: the add-on (`addons/server_events/`, versioned in the repo)
+
+- `manifest.json` pinned to the verified version, fresh UUIDs. `scripts/main.js`, plain JavaScript, no build step, every handler in try/catch.
+- Emits one line per event: `[MCSHS-EVENT] {"v":1,"type":"player_death","player":"Steve","cause":"entityAttack","by":"minecraft:zombie","by_name":null}`.
+- Events: `player_death` (cause, killer type id, killer name if a player or named mob), `player_spawn` (initial vs respawn), `player_dimension_change`, `player_gamemode_change`. Optionally a mob-kills-by-player event if cheap and low volume.
+- The app parser recognises the `[MCSHS-EVENT]` marker, takes the JSON, adds `ts` and `source: "addon"`, and writes it through `emit`. Same log, same files.
+
+### Step 2.2: installing automatically
+
+- `mc/addons.py`: before server start, ensure `addons/server_events` is copied into `<active>/current/worlds/<level-name>/behavior_packs/server_events/` and listed in `world_behavior_packs.json` (merge, preserve other packs, back up before the first modification). Idempotent; copy only when the add-on version changed. Worlds are already carried across updates by `mc/update.py`.
+- `MC_SERVER_EVENTS_ADDON` (default `true`), in `.env.template`.
+- After a Mojang update the pinned dependency may stop loading. If the add-on is enabled and no add-on line (e.g. a `addon_loaded` event on `worldLoad`) is seen within N minutes of `server_ready`, log CRITICAL "server events add-on does not appear to be running, the manifest may need updating", which feeds admin alerts.
+
+### Step 2.3: tests and docs
+
+- Tests: add-on line parsing (BDS prefix, malformed JSON), installer idempotence and `world_behavior_packs.json` merge/backup in temp directories.
+- README: what the add-on adds, how to disable it, what to do when it stops loading after an update.
+
+## Phase 3: parsers and statistics (on demand)
+
+- `mc/stats.py`, run as `python -m mc.stats`, reads all event files (optionally a date range) and replays them. No database; at this volume a full replay is instant.
+- Playtime: sessions from `player_join` to `player_leave`, closed early by `server_stop`, `server_crash` or `app_exit`/a gap with no app events. Keyed by xuid, showing the latest name. Totals for all time, last 7 and 30 days, session count, last seen.
+- Deaths per player, by cause and killer (phase 2 data).
+- Server uptime/downtime from start/stop/crash events; count of restarts, updates and crashes.
+- Table output by default, `--json` for scripting. Tests with small synthetic event files covering join/leave, crash mid-session, leave without join, duplicate join, name change, missing days.
+
+## Later ideas (not part of this plan)
+
+- **Smarter backups:** skip a backup when no player was online since the last one (needs only phase 1).
+- **Idle-based restarts:** run the daily restart and updates when nobody is online, skipping the countdown.
+- **Discord/Teams feed:** post joins, leaves and deaths through the admin alerts webhook sender, rate limited.
+- **In-game leaderboards** via periodic `say`, built on phase 3.
 
 ## Constraints
 
 - Plan only. Do not start implementation until asked.
-- Anything touching the live world needs a backup first; do the step 0 spike on a scratch world only.
+- Anything touching the live world needs a backup first; do the phase 2 spike on a scratch world only.
+- No new third-party dependencies; match existing code style.
