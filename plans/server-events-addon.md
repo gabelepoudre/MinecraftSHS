@@ -58,6 +58,11 @@ Decision rule (user, 2026-10-05):
 1. On the live server, check how achievements behave today: whether they still unlock on the dedicated server, and
    whether they appear on the console (search the daily files in `logs/` for "achievement"). If a line exists, fix
    `_ACHIEVEMENT_RE` in `mc/events.py` from it.
+   The "achievements" the user remembers seeing (the same player earning one on more than one world) may actually be
+   **Realm Stories**-style per-world events (e.g. a player's first diamonds), not Xbox achievements, which unlock once
+   per account. Check whether these exist on a dedicated server (not only on Realms), whether they show on the console,
+   and whether a behavior pack disables them. For the prize idea, either kind is fine: a server-wide or per-player
+   "first diamond" is enough to reward the first-ever finder.
 2. If achievements still work and are logged, keep them and skip the add-on. Deaths stay untracked unless a second
    Minecraft licence is bought for a listener bot.
 3. If achievements are no longer attainable or logged anyway, the add-on costs nothing more, so build it. Besides
