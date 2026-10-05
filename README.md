@@ -126,3 +126,4 @@ Tests: `python -m pytest tests`
 - ~~delete runtime backups more than 48 hours old~~ (superseded by tiered retention, see Backups)
 - ~~update backups need to be sorted by world name~~ (superseded: update backups are timestamped and pruned, see Backups)
 - ~~arbitrary on-start commands~~ (done, edit `startup_commands.txt`, created from `startup_commands.template.txt` on first start; `$$sleep(N)` waits N seconds; path via `MC_STARTUP_COMMANDS_FILE`)
+- no internet at startup causes a restart loop: in online mode BDS waits about a minute for Minecraft services, then stops itself ("Could not connect to Minecraft services"), which `maintain_loop` treats as a crash and restarts, repeating `server_crash` events and CRITICAL alerts until the connection returns. Detect that log line and back off (and alert once) instead. See `plans/headless-listener-feasibility.md`
