@@ -39,6 +39,14 @@ deleted. Evidence is tagged **[verified]** (experiment here), **[sources]** (doc
    bedrock-protocol with a bot account is still the lower-effort path. A hand-written Python client is viable, but its
    version tracking becomes our job.
 
+**Follow-up test (2026-10-05): a free Microsoft account cannot get a Minecraft multiplayer token.** With
+bedrock-protocol 3.60.1 against a throwaway online-mode BDS 1.26.52.3, an old alt account that does not own Minecraft
+completed the Microsoft device-code sign-in, then got `401 Unauthorized` from
+`/multiplayer/bedrock/authentication` ("Ensure that you are able to sign-in to Minecraft with this account"). The client
+never reached the server. Most likely cause: the account does not own Bedrock (an Xbox profile issue is less likely,
+since the Xbox token step succeeded). So a listener bot needs an account that owns Minecraft. The broadcaster never
+calls this endpoint, so this result does not apply to it.
+
 ## Answers to the open questions
 
 ### 1. NetherNet
