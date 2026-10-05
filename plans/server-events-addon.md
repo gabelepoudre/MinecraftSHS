@@ -49,6 +49,20 @@ Stop here. When the live server next runs with this code, check the files look r
 
 ## Phase 2: add-on as an extra event source
 
+**Status (2026-10-05): on hold, pending a decision.** Any third-party behavior pack, even a script-only one using the
+stable API, permanently disables achievements on the world (see `listener-bot-feasibility.md`). The alternatives were
+researched and rejected: no server setting logs deaths or chat; a listener bot needs an account that owns Minecraft;
+offline-mode, proxy and auth-bypass routes fail or cost achievements (see `headless-listener-feasibility.md`).
+
+Decision rule (user, 2026-10-05):
+1. On the live server, check how achievements behave today: whether they still unlock on the dedicated server, and
+   whether they appear on the console (search the daily files in `logs/` for "achievement"). If a line exists, fix
+   `_ACHIEVEMENT_RE` in `mc/events.py` from it.
+2. If achievements still work and are logged, keep them and skip the add-on. Deaths stay untracked unless a second
+   Minecraft licence is bought for a listener bot.
+3. If achievements are no longer attainable or logged anyway, the add-on costs nothing more, so build it. Besides
+   deaths, have it track "firsts" for prizes, e.g. first diamond, first Ender Dragon kill, first Wither kill.
+
 ### Step 2.0: verification spike (scratch world only)
 
 Research (2026-10-01, Microsoft Learn `@minecraft/server` stable API): `world.afterEvents.entityDie` (damage source, damaging entity), `playerJoin`, `playerLeave`, `playerSpawn` (with an initial-spawn flag), `playerGameModeChange`, `playerDimensionChange` and more are stable, no beta toggle. Chat is experimental only and is out of scope.
